@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# Environment variables (secrets!)
+.env
+
+# Database (local data)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Test images
+test_images/
+
+# Claude Code
+.claude/

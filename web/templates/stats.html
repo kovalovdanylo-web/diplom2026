@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+
+{% block title %}Статистика{% endblock %}
+{% block page_title %}Статистика{% endblock %}
+{% block page_subtitle %}
+  {%- if selected_month %}
+    {% set parts = selected_month.split('-') %}
+    {% set ua_months = ['','Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'] %}
+    {{ ua_months[parts[1]|int] }} {{ parts[0] }}
+  {%- else %}Аналіз витрат за весь час{%- endif %}
+{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block topbar_actions %}
+{% set ua_months = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'] %}
+<form method="GET" action="{{ url_for('stats') }}" class="filters">
+  <select class="filter-select" name="month" onchange="this.form.submit()">
+    <option value="">Весь час</option>
+    {% for m in months %}
+    {% set parts = m.ym.split('-') %}
+    <option value="{{ m.ym }}" {% if m.ym == selected_month %}selected{% endif %}>
+      {{ ua_months[parts[1]|int] }} {{ parts[0] }}
+    </option>
+    {% endfor %}
+  </select>
+  {% if selected_month %}
+  <a href="{{ url_for('stats') }}" class="btn btn-ghost">Скинути</a>
+  {% endif %}
+</form>
+{% endblock %}
+
+{% block content %}
+
+<!-- Summary cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Чеків всього</div>
+    <div class="stat-value">{{ summary.count or 0 }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Загальна сума</div>
+    <div class="stat-value accent">{{ "%.2f"|format(summary.total_sum or 0) }}</div>
+    <div class="stat-meta">грн</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Середній чек</div>
+    <div class="stat-value">{{ "%.2f"|format(summary.avg_amount or 0) }}</div>
+    <div class="stat-meta">грн</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Категорій</div>
+    <div class="stat-value">{{ cat_stats|length }}</div>
+  </div>
+</div>
+
+{% if cat_stats or month_stats %}
+<div class="charts-grid">
+
+  <!-- Pie: categories -->
+  <div class="card chart-container">
+    <div class="card-title" style="margin-bottom:6px;">Витрати за категоріями</div>
+    <div class="chart-canvas-wrap">
+      <canvas id="pieChart"></canvas>
+    </div>
+    {% if cat_stats %}
+    <div class="legend-list">
+      {% set total_all = namespace(v=0) %}
+      {% for c in cat_stats %}{% set total_all.v = total_all.v + (c.total or 0) %}{% endfor %}
+      {% for c in cat_stats %}
+      <div class="legend-item">
+        <div class="legend-dot" data-idx="{{ loop.index0 }}"></div>
+        <span class="legend-name">{{ c.category }}</span>
+        <span class="legend-amount">{{ "%.2f"|format(c.total or 0) }} грн</span>
+        <span class="legend-pct">
+          {% if total_all.v > 0 %}{{ "%.0f"|format((c.total or 0) / total_all.v * 100) }}%{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Bar: monthly -->
+  <div class="card chart-container">
+    <div class="card-title" style="margin-bottom:6px;">Витрати по місяцях</div>
+    <div class="chart-canvas-wrap bar-wrap">
+      <canvas id="barChart"></canvas>
+    </div>
+    {% if month_stats %}
+    <div class="mt-4" style="font-size:12px;color:var(--text-muted);">
+      Показано останніх {{ month_stats|length }} місяців
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% else %}
+<div class="card">
+  <div class="empty-state">
+    <div class="icon-lg">📊</div>
+    <p>Поки немає даних для відображення.<br>
+       Надішліть фото чеку боту щоб розпочати.</p>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PALETTE = [
+  '#4f6ef7','#22c55e','#f59e0b','#ef4444','#8b5cf6',
+  '#06b6d4','#ec4899','#84cc16','#f97316','#64748b',
+];
+
+/* ── Pie ─────────────────────────────────────────────────────── */
+const catLabels = {{ cat_stats | map(attribute='category') | list | tojson }};
+const catValues = {{ cat_stats | map(attribute='total') | list | tojson }};
+
+if (catLabels.length) {
+  const pieCtx = document.getElementById('pieChart').getContext('2d');
+  new Chart(pieCtx, {
+    type: 'doughnut',
+    data: {
+      labels: catLabels,
+      datasets: [{
+        data: catValues,
+        backgroundColor: PALETTE,
+        borderColor: '#ffffff',
+        borderWidth: 2,
+        hoverBorderWidth: 3,
+      }]
+    },
+    options: {
+      cutout: '62%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.formattedValue} грн`
+          }
+        }
+      }
+    }
+  });
+
+  // Color legend dots
+  document.querySelectorAll('.legend-dot').forEach(el => {
+    el.style.background = PALETTE[parseInt(el.dataset.idx)] || '#ccc';
+  });
+}
+
+/* ── Bar ─────────────────────────────────────────────────────── */
+const monthLabels = {{ month_stats | map(attribute='month') | list | tojson }};
+const monthValues = {{ month_stats | map(attribute='total') | list | tojson }};
+
+// Format labels: "2025-01" → "Січ 25"
+const UA_MONTHS = ['Січ','Лют','Бер','Кві','Тра','Чер',
+                   'Лип','Сер','Вер','Жов','Лис','Гру'];
+const fmtLabels = monthLabels.map(m => {
+  const [y, mo] = m.split('-');
+  return (UA_MONTHS[parseInt(mo) - 1] || mo) + " '" + y.slice(2);
+});
+
+if (monthLabels.length) {
+  const barCtx = document.getElementById('barChart').getContext('2d');
+  new Chart(barCtx, {
+    type: 'bar',
+    data: {
+      labels: fmtLabels,
+      datasets: [{
+        label: 'Витрати, грн',
+        data: monthValues,
+        backgroundColor: 'rgba(79,110,247,0.18)',
+        borderColor: '#4f6ef7',
+        borderWidth: 2,
+        borderRadius: 5,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.formattedValue} грн`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 11 }, color: '#9ca3af' }
+        },
+        y: {
+          grid: { color: '#f0f2f8' },
+          ticks: {
+            font: { size: 11 },
+            color: '#9ca3af',
+            callback: v => v.toLocaleString('uk')
+          }
+        }
+      }
+    }
+  });
+}
+</script>
+{% endblock %}

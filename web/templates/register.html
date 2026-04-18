@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Реєстрація — Receipt Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="mark">🧾</div>
+      <div class="name">Receipt Tracker</div>
+    </div>
+
+    <div class="auth-title">Реєстрація</div>
+    <div class="auth-sub">Створіть акаунт для доступу до трекера</div>
+
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('register') }}">
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input class="form-input" type="email" name="email"
+               placeholder="you@example.com" required autofocus>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Пароль</label>
+        <input class="form-input" type="password" name="password"
+               placeholder="Мінімум 8 символів" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Повторіть пароль</label>
+        <input class="form-input" type="password" name="password_confirm"
+               placeholder="••••••••" required>
+      </div>
+      <button type="submit" class="btn-auth">Створити акаунт</button>
+    </form>
+
+    <div class="auth-switch">
+      Вже є акаунт?
+      <a href="{{ url_for('login') }}">Увійти</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

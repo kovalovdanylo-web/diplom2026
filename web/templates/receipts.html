@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Чеки{% endblock %}
+{% block page_title %}Чеки{% endblock %}
+{% block page_subtitle %}
+  {{ receipts|length }} записів
+  {%- if selected_month %} · {{ selected_month | replace('-', '.') }}{% endif %}
+  {%- if selected_cat %} · {{ selected_cat }}{% endif %}
+{% endblock %}
+
+{% block topbar_actions %}
+<form method="GET" action="{{ url_for('receipts') }}" class="filters" id="filterForm">
+
+  {# Month selector #}
+  <select class="filter-select" name="month" onchange="document.getElementById('filterForm').submit()">
+    <option value="">Всі місяці</option>
+    {% for m in months %}
+    {% set ym = m.ym %}
+    {% set parts = ym.split('-') %}
+    {% set ua_months = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'] %}
+    <option value="{{ ym }}" {% if ym == selected_month %}selected{% endif %}>
+      {{ ua_months[parts[1]|int] }} {{ parts[0] }}
+    </option>
+    {% endfor %}
+  </select>
+
+  {# Category selector #}
+  <select class="filter-select" name="category" onchange="document.getElementById('filterForm').submit()">
+    <option value="">Всі категорії</option>
+    {% for cat in categories %}
+    <option value="{{ cat.category }}" {% if cat.category == selected_cat %}selected{% endif %}>
+      {{ cat.category }}
+    </option>
+    {% endfor %}
+  </select>
+
+  {% if selected_cat or selected_month %}
+  <a href="{{ url_for('receipts') }}" class="btn btn-ghost">Скинути</a>
+  {% endif %}
+</form>
+{% endblock %}
+
+{% block content %}
+
+{% if receipts %}
+
+<!-- Stat strip -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Чеків</div>
+    <div class="stat-value">{{ receipts|length }}</div>
+    <div class="stat-meta">
+      {% if selected_cat %}за фільтром{% else %}загалом{% endif %}
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Загальна сума</div>
+    <div class="stat-value accent">{{ "%.2f"|format(total_sum) }}</div>
+    <div class="stat-meta">грн</div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Час</th>
+          <th>Сума, грн</th>
+          <th>Категорія</th>
+          <th>Номер чеку</th>
+          <th>ФН</th>
+          <th>ЗН</th>
+          <th>QR</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in receipts %}
+        <tr>
+          <td>{{ r.receipt_date or '—' }}</td>
+          <td class="muted">{{ r.receipt_time or '—' }}</td>
+          <td class="amount-cell">
+            {% if r.amount %}{{ "%.2f"|format(r.amount) }}{% else %}—{% endif %}
+          </td>
+          <td>
+            {% if r.category %}
+            <span class="badge">{{ r.category }}</span>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ r.receipt_number or '—' }}</td>
+          <td class="muted" style="font-size:11px;">{{ r.fiscal_number or '—' }}</td>
+          <td class="muted" style="font-size:11px;">{{ r.serial_number or '—' }}</td>
+          <td>
+            {% if r.qr_link %}
+            <a class="qr-link" href="{{ r.qr_link }}" target="_blank" title="{{ r.qr_link }}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </a>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="table-total-row">
+          <td colspan="2">Разом</td>
+          <td class="amount-cell">{{ "%.2f"|format(total_sum) }}</td>
+          <td colspan="5"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="empty-state">
+    <div class="icon-lg">🧾</div>
+    <p>
+      {% if selected_cat %}
+        Чеків у категорії <b>{{ selected_cat }}</b> не знайдено.
+      {% else %}
+        Поки немає жодного чеку.<br>
+        Надішліть фото чеку боту щоб розпочати.
+      {% endif %}
+    </p>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
