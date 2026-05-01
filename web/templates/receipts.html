@@ -1,30 +1,26 @@
 {% extends "base.html" %}
-
 {% block title %}Чеки{% endblock %}
 {% block page_title %}Чеки{% endblock %}
 {% block page_subtitle %}
   {{ receipts|length }} записів
-  {%- if selected_month %} · {{ selected_month | replace('-', '.') }}{% endif %}
+  {%- if selected_month %} · {{ selected_month.replace('-', '.') }}{% endif %}
   {%- if selected_cat %} · {{ selected_cat }}{% endif %}
 {% endblock %}
 
-{% block topbar_actions %}
-<form method="GET" action="{{ url_for('receipts') }}" class="filters" id="filterForm">
+{% block page_actions %}
+<form method="GET" action="{{ url_for('receipts') }}" class="toolbar" id="filterForm">
 
-  {# Month selector #}
   <select class="filter-select" name="month" onchange="document.getElementById('filterForm').submit()">
     <option value="">Всі місяці</option>
+    {% set ua = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'] %}
     {% for m in months %}
-    {% set ym = m.ym %}
-    {% set parts = ym.split('-') %}
-    {% set ua_months = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'] %}
-    <option value="{{ ym }}" {% if ym == selected_month %}selected{% endif %}>
-      {{ ua_months[parts[1]|int] }} {{ parts[0] }}
-    </option>
+      {% set parts = m.ym.split('-') %}
+      <option value="{{ m.ym }}" {% if m.ym == selected_month %}selected{% endif %}>
+        {{ ua[parts[1]|int] }} {{ parts[0] }}
+      </option>
     {% endfor %}
   </select>
 
-  {# Category selector #}
   <select class="filter-select" name="category" onchange="document.getElementById('filterForm').submit()">
     <option value="">Всі категорії</option>
     {% for cat in categories %}
@@ -38,20 +34,37 @@
   <a href="{{ url_for('receipts') }}" class="btn btn-ghost">Скинути</a>
   {% endif %}
 </form>
+
+<!-- Column visibility toggle -->
+<div class="col-panel-wrap" id="colWrap">
+  <button class="btn btn-ghost" id="colBtn" onclick="toggleColPanel(event)">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+    </svg>
+    Колонки
+  </button>
+  <div class="col-panel" id="colPanel" style="display:none;">
+    <div class="col-panel-label">Показати колонки</div>
+    <label class="col-toggle"><input type="checkbox" data-col="col-date" checked> Дата</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-time" checked> Час</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-amount" checked> Сума</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-cat" checked> Категорія</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-rnum" checked> Номер чеку</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-fn"> Фіскальний №</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-sn"> Заводський №</label>
+    <label class="col-toggle"><input type="checkbox" data-col="col-qr" checked> QR</label>
+  </div>
+</div>
 {% endblock %}
 
 {% block content %}
-
 {% if receipts %}
 
-<!-- Stat strip -->
 <div class="stat-grid">
   <div class="stat-card">
     <div class="stat-label">Чеків</div>
     <div class="stat-value">{{ receipts|length }}</div>
-    <div class="stat-meta">
-      {% if selected_cat %}за фільтром{% else %}загалом{% endif %}
-    </div>
   </div>
   <div class="stat-card">
     <div class="stat-label">Загальна сума</div>
@@ -60,60 +73,73 @@
   </div>
 </div>
 
-<!-- Table -->
 <div class="card">
   <div class="table-wrap">
-    <table>
+    <table id="receiptsTable">
       <thead>
         <tr>
-          <th>Дата</th>
-          <th>Час</th>
-          <th>Сума, грн</th>
-          <th>Категорія</th>
-          <th>Номер чеку</th>
-          <th>ФН</th>
-          <th>ЗН</th>
-          <th>QR</th>
+          <th style="width:36px;padding-left:18px;">
+            <input type="checkbox" id="checkAll" title="Вибрати всі"
+                   style="accent-color:var(--accent);cursor:pointer;">
+          </th>
+          <th class="sortable col-date"   onclick="sortTable(1)">Дата <i class="sort-icon">↕</i></th>
+          <th class="col-time">Час</th>
+          <th class="sortable col-amount" onclick="sortTable(3)">Сума, грн <i class="sort-icon">↕</i></th>
+          <th class="col-cat">Категорія</th>
+          <th class="col-rnum">Номер чеку</th>
+          <th class="col-fn col-hidden">ФН</th>
+          <th class="col-sn col-hidden">ЗН</th>
+          <th class="col-qr">QR</th>
+          <th style="width:40px;"></th>
         </tr>
       </thead>
       <tbody>
         {% for r in receipts %}
-        <tr>
-          <td>{{ r.receipt_date or '—' }}</td>
-          <td class="muted">{{ r.receipt_time or '—' }}</td>
-          <td class="amount-cell">
+        <tr data-id="{{ r.id }}">
+          <td style="padding-left:18px;">
+            <input type="checkbox" class="row-check" value="{{ r.id }}"
+                   style="accent-color:var(--accent);cursor:pointer;">
+          </td>
+          <td class="col-date">{{ r.receipt_date or '—' }}</td>
+          <td class="col-time muted">{{ r.receipt_time or '—' }}</td>
+          <td class="col-amount amount-cell">
             {% if r.amount %}{{ "%.2f"|format(r.amount) }}{% else %}—{% endif %}
           </td>
-          <td>
-            {% if r.category %}
-            <span class="badge">{{ r.category }}</span>
-            {% else %}
-            <span class="muted">—</span>
-            {% endif %}
+          <td class="col-cat">
+            {% if r.category %}<span class="badge">{{ r.category }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
           </td>
-          <td class="muted">{{ r.receipt_number or '—' }}</td>
-          <td class="muted" style="font-size:11px;">{{ r.fiscal_number or '—' }}</td>
-          <td class="muted" style="font-size:11px;">{{ r.serial_number or '—' }}</td>
-          <td>
+          <td class="col-rnum muted">{{ r.receipt_number or '—' }}</td>
+          <td class="col-fn col-hidden muted" style="font-size:11px;">{{ r.fiscal_number or '—' }}</td>
+          <td class="col-sn col-hidden muted" style="font-size:11px;">{{ r.serial_number or '—' }}</td>
+          <td class="col-qr">
             {% if r.qr_link %}
-            <a class="qr-link" href="{{ r.qr_link }}" target="_blank" title="{{ r.qr_link }}">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2">
+            <a class="qr-link" href="{{ r.qr_link }}" target="_blank">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/>
-                <line x1="10" y1="14" x2="21" y2="3"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
               </svg>
             </a>
             {% else %}—{% endif %}
+          </td>
+          <td>
+            <button class="del-btn" title="Видалити" onclick="askDelete(this, {{ r.id }})">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6"/><path d="M14 11v6"/>
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+              </svg>
+            </button>
           </td>
         </tr>
         {% endfor %}
       </tbody>
       <tfoot>
         <tr class="table-total-row">
-          <td colspan="2">Разом</td>
+          <td colspan="3">Разом</td>
           <td class="amount-cell">{{ "%.2f"|format(total_sum) }}</td>
-          <td colspan="5"></td>
+          <td colspan="6"></td>
         </tr>
       </tfoot>
     </table>
@@ -124,16 +150,220 @@
 <div class="card">
   <div class="empty-state">
     <div class="icon-lg">🧾</div>
-    <p>
-      {% if selected_cat %}
-        Чеків у категорії <b>{{ selected_cat }}</b> не знайдено.
-      {% else %}
-        Поки немає жодного чеку.<br>
-        Надішліть фото чеку боту щоб розпочати.
-      {% endif %}
-    </p>
+    <p>{% if selected_cat or selected_month %}Нічого не знайдено за вибраним фільтром.
+       {% else %}Поки немає чеків. Надішліть фото боту щоб розпочати.{% endif %}</p>
   </div>
 </div>
 {% endif %}
 
+<!-- Floating bulk-delete bar -->
+<div class="bulk-bar" id="bulkBar">
+  <span class="bulk-bar-label">Вибрано: <strong id="bulkCount">0</strong></span>
+  <button class="bulk-bar-del" onclick="bulkDelete()">Видалити</button>
+  <button class="bulk-bar-cancel" onclick="clearSelection()">Скасувати</button>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Column toggle ──────────────────────────────────────────────── */
+const COL_KEY = 'receipts_cols';
+
+function applyColPrefs() {
+  const prefs = JSON.parse(localStorage.getItem(COL_KEY) || '{}');
+  document.querySelectorAll('#colPanel input[type=checkbox]').forEach(cb => {
+    const col = cb.dataset.col;
+    const visible = col in prefs ? prefs[col] : cb.checked;
+    cb.checked = visible;
+    setColVisible(col, visible);
+  });
+}
+
+function setColVisible(col, visible) {
+  document.querySelectorAll('.' + col).forEach(el => {
+    el.classList.toggle('col-hidden', !visible);
+  });
+}
+
+document.querySelectorAll('#colPanel input[type=checkbox]').forEach(cb => {
+  cb.addEventListener('change', () => {
+    setColVisible(cb.dataset.col, cb.checked);
+    const prefs = JSON.parse(localStorage.getItem(COL_KEY) || '{}');
+    prefs[cb.dataset.col] = cb.checked;
+    localStorage.setItem(COL_KEY, JSON.stringify(prefs));
+  });
+});
+
+applyColPrefs();
+
+/* ── Column panel open/close ────────────────────────────────────── */
+let panelOpen = false;
+
+function toggleColPanel(e) {
+  e.stopPropagation();
+  const panel = document.getElementById('colPanel');
+  if (panelOpen) closeColPanel(); else openColPanel();
+}
+
+function openColPanel() {
+  const panel = document.getElementById('colPanel');
+  panel.style.display = 'flex';
+  panel.classList.remove('closing');
+  panelOpen = true;
+}
+
+function closeColPanel() {
+  const panel = document.getElementById('colPanel');
+  panel.classList.add('closing');
+  setTimeout(() => { panel.style.display = 'none'; panelOpen = false; }, 140);
+}
+
+document.addEventListener('click', e => {
+  if (panelOpen && !document.getElementById('colWrap').contains(e.target)) {
+    closeColPanel();
+  }
+});
+
+/* ── Checkboxes & bulk delete ───────────────────────────────────── */
+const checkAll = document.getElementById('checkAll');
+const bulkBar  = document.getElementById('bulkBar');
+const bulkCnt  = document.getElementById('bulkCount');
+
+function getChecked() {
+  return Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+}
+function updateBulkBar() {
+  const ids = getChecked();
+  if (ids.length > 0) {
+    bulkCnt.textContent = ids.length;
+    bulkBar.classList.add('visible');
+  } else {
+    bulkBar.classList.remove('visible');
+    if (checkAll) checkAll.checked = false;
+  }
+}
+function clearSelection() {
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  if (checkAll) checkAll.checked = false;
+  bulkBar.classList.remove('visible');
+}
+
+if (checkAll) {
+  checkAll.addEventListener('change', () => {
+    document.querySelectorAll('.row-check').forEach(cb => cb.checked = checkAll.checked);
+    updateBulkBar();
+  });
+}
+document.querySelectorAll('.row-check').forEach(cb => {
+  cb.addEventListener('change', updateBulkBar);
+});
+
+async function bulkDelete() {
+  const ids = getChecked();
+  if (!ids.length) return;
+  await doDelete(ids);
+}
+
+/* ── Single row inline confirm ──────────────────────────────────── */
+let activeConfirmRow = null;
+
+function askDelete(btn, id) {
+  // Відміняємо попередній confirm якщо є
+  if (activeConfirmRow) restoreRow(activeConfirmRow);
+
+  const td = btn.closest('td');
+  const row = btn.closest('tr');
+  activeConfirmRow = { td, originalHTML: td.innerHTML, row };
+
+  td.innerHTML = `
+    <div class="del-confirm">
+      Видалити?
+      <button class="del-confirm-yes" onclick="confirmDelete(${id})">Так</button>
+      <button class="del-confirm-no"  onclick="cancelDelete()">Ні</button>
+    </div>`;
+}
+function restoreRow(saved) {
+  saved.td.innerHTML = saved.originalHTML;
+  activeConfirmRow = null;
+}
+function cancelDelete() {
+  if (activeConfirmRow) restoreRow(activeConfirmRow);
+}
+async function confirmDelete(id) {
+  await doDelete([id]);
+}
+
+/* ── HTTP delete ────────────────────────────────────────────────── */
+async function doDelete(ids) {
+  try {
+    const resp = await fetch('/receipts/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      ids.forEach(id => {
+        const row = document.querySelector(`tr[data-id="${id}"]`);
+        if (row) {
+          row.style.transition = 'opacity 0.25s, transform 0.25s';
+          row.style.opacity = '0';
+          row.style.transform = 'translateX(12px)';
+          setTimeout(() => row.remove(), 250);
+        }
+      });
+      clearSelection();
+      activeConfirmRow = null;
+    }
+  } catch(e) {
+    console.error('Delete failed', e);
+  }
+}
+
+/* ── Table sort ─────────────────────────────────────────────────── */
+let sortCol = -1, sortDir = 1;
+
+// DD.MM.YYYY → YYYYMMDD для коректного порівняння дат
+function _dateKey(s) {
+  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  return m ? m[3] + m[2] + m[1] : s;
+}
+
+function sortTable(col) {
+  const table = document.getElementById('receiptsTable');
+  const tbody = table.querySelector('tbody');
+  const rows  = Array.from(tbody.querySelectorAll('tr'));
+
+  if (sortCol === col) sortDir *= -1; else { sortCol = col; sortDir = 1; }
+
+  const DATE_COL = 1; // індекс колонки "Дата"
+  rows.sort((a, b) => {
+    const av = a.cells[col]?.innerText.trim() || '';
+    const bv = b.cells[col]?.innerText.trim() || '';
+    // Дата — порівнюємо як YYYYMMDD
+    if (col === DATE_COL) return _dateKey(av).localeCompare(_dateKey(bv)) * sortDir;
+    // Число — числове порівняння
+    const an = parseFloat(av.replace(',', '.'));
+    const bn = parseFloat(bv.replace(',', '.'));
+    if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
+    return av.localeCompare(bv, 'uk') * sortDir;
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+
+  // Update sort icons
+  table.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    const icon = th.querySelector('.sort-icon');
+    if (icon) icon.textContent = '↕';
+  });
+  const th = table.querySelectorAll('thead th')[col];
+  if (th) {
+    th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+    const icon = th.querySelector('.sort-icon');
+    if (icon) icon.textContent = sortDir === 1 ? '↑' : '↓';
+  }
+}
+</script>
 {% endblock %}

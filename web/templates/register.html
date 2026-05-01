@@ -29,16 +29,45 @@
         <input class="form-input" type="email" name="email"
                placeholder="you@example.com" required autofocus>
       </div>
+
       <div class="form-group">
         <label class="form-label">Пароль</label>
-        <input class="form-input" type="password" name="password"
-               placeholder="Мінімум 8 символів" required>
+        <div class="input-wrap">
+          <input class="form-input" type="password" name="password"
+                 id="regPwd" placeholder="Мінімум 8 символів" required
+                 oninput="checkStrength(this.value)">
+          <button type="button" class="eye-btn" onclick="toggleEye('regPwd', this)" tabindex="-1">
+            <svg id="regPwd-eye" width="16" height="16" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+        <!-- Strength indicator -->
+        <div class="strength-bar">
+          <div class="strength-seg" id="seg1"></div>
+          <div class="strength-seg" id="seg2"></div>
+          <div class="strength-seg" id="seg3"></div>
+        </div>
+        <div class="strength-label" id="strengthLabel"></div>
       </div>
+
       <div class="form-group">
         <label class="form-label">Повторіть пароль</label>
-        <input class="form-input" type="password" name="password_confirm"
-               placeholder="••••••••" required>
+        <div class="input-wrap">
+          <input class="form-input" type="password" name="password_confirm"
+                 id="regPwd2" placeholder="••••••••" required>
+          <button type="button" class="eye-btn" onclick="toggleEye('regPwd2', this)" tabindex="-1">
+            <svg id="regPwd2-eye" width="16" height="16" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
       </div>
+
       <button type="submit" class="btn-auth">Створити акаунт</button>
     </form>
 
@@ -48,5 +77,45 @@
     </div>
   </div>
 </div>
+
+<script>
+/* ── Eye toggle ──────────────────────────────────────────────── */
+function toggleEye(inputId, btn) {
+  const input = document.getElementById(inputId);
+  const svg   = document.getElementById(inputId + '-eye');
+  const show  = input.type === 'password';
+  input.type  = show ? 'text' : 'password';
+  svg.innerHTML = show
+    ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+       <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+       <line x1="1" y1="1" x2="23" y2="23"/>`
+    : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`;
+}
+
+/* ── Strength indicator ──────────────────────────────────────── */
+const COLORS = { 1: '#ef4444', 2: '#f59e0b', 3: '#22c55e' };
+const LABELS = { 0: '', 1: 'Слабкий', 2: 'Середній', 3: 'Надійний' };
+
+function calcStrength(pw) {
+  if (pw.length < 8) return 1;
+  const hasDigit   = /\d/.test(pw);
+  const hasUpper   = /[A-Z]/.test(pw);
+  const hasSpecial = /[^A-Za-z0-9]/.test(pw);
+  const score = [hasDigit, hasUpper || hasSpecial].filter(Boolean).length;
+  return score >= 2 ? 3 : 2;
+}
+
+function checkStrength(pw) {
+  const level = pw.length === 0 ? 0 : calcStrength(pw);
+  const color = COLORS[level] || 'transparent';
+  [1, 2, 3].forEach(i => {
+    document.getElementById('seg' + i).style.background =
+      i <= level ? color : '#1e2336';
+  });
+  const label = document.getElementById('strengthLabel');
+  label.textContent = LABELS[level];
+  label.style.color = color || '#2e3558';
+}
+</script>
 </body>
 </html>

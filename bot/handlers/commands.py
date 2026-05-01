@@ -3,12 +3,13 @@ from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import (
     get_total_stats,
     auth_set_logged_in,
     auth_get_by_telegram,
+    delete_receipt,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,51 @@ async def cmd_total(message: Message):
     text += f"\n🤖 Витрати API: ~${total_cost:.3f}"
 
     await message.answer(text, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("del_ask:"))
+async def cb_del_ask(callback: CallbackQuery):
+    """Перший крок: запит підтвердження видалення."""
+    receipt_id = int(callback.data.split(":")[1])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Так, видалити", callback_data=f"del_yes:{receipt_id}"),
+        InlineKeyboardButton(text="❌ Скасувати",    callback_data="del_no"),
+    ]])
+
+    await callback.answer()
+    await callback.message.answer(
+        f"⚠️ Чек буде видалено з бази даних. Це незворотно.\n\n"
+        f"Підтвердити видалення?",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data.startswith("del_yes:"))
+async def cb_del_yes(callback: CallbackQuery):
+    """Другий крок: підтверджено — видаляємо."""
+    receipt_id = int(callback.data.split(":")[1])
+
+    auth = await auth_get_by_telegram(callback.from_user.id)
+    if not auth:
+        await callback.answer("❌ Помилка авторизації", show_alert=True)
+        return
+
+    deleted = await delete_receipt(auth_id=auth["id"], receipt_id=receipt_id)
+
+    if deleted:
+        await callback.message.edit_text("✅ Чек успішно видалено.")
+    else:
+        await callback.message.edit_text("❌ Чек не знайдено або вже видалено.")
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "del_no")
+async def cb_del_no(callback: CallbackQuery):
+    """Скасування видалення."""
+    await callback.message.edit_text("↩️ Видалення скасовано.")
+    await callback.answer()
 
 
 @router.message(F.text)

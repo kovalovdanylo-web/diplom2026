@@ -1,0 +1,716 @@
+{% extends "base.html" %}
+{% block title %}Порівняння{% endblock %}
+{% block page_title %}Порівняння місяців{% endblock %}
+{% block page_subtitle %}Оберіть два місяці та тип візуалізації{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+{% set ua_full = ['','Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'] %}
+
+<!-- Month selectors -->
+<div class="compare-selectors">
+  <div class="compare-selector-card">
+    <div class="compare-selector-label">Місяць А</div>
+    <select id="selA">
+      <option value="">Оберіть місяць</option>
+      {% for m in months %}
+      {% set parts = m.ym.split('-') %}
+      <option value="{{ m.ym }}" {% if m.ym == month_a %}selected{% endif %}>
+        {{ ua_full[parts[1]|int] }} {{ parts[0] }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="compare-vs">vs</div>
+
+  <div class="compare-selector-card">
+    <div class="compare-selector-label">Місяць Б</div>
+    <select id="selB">
+      <option value="">Оберіть місяць</option>
+      {% for m in months %}
+      {% set parts = m.ym.split('-') %}
+      <option value="{{ m.ym }}" {% if m.ym == month_b %}selected{% endif %}>
+        {{ ua_full[parts[1]|int] }} {{ parts[0] }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="compare-actions">
+  <button class="btn-compare" id="btnCompare" onclick="doCompare()">Порівняти</button>
+  {% if month_a and month_b %}
+  <a href="{{ url_for('compare') }}" class="btn btn-ghost" onclick="clearStorage()">Скинути</a>
+  {% endif %}
+</div>
+
+{% if month_a and month_b %}
+
+<!-- Summary -->
+<div class="compare-summary">
+  <div class="compare-summary-card">
+    <div class="compare-summary-title">{{ label_a }}</div>
+    <div class="compare-summary-val">
+      {{ "%.2f"|format(sum_a or 0) }}
+      <small style="font-size:13px;font-weight:400;color:var(--text-muted);"> грн</small>
+    </div>
+    <div class="stat-meta">{{ count_a }} чеків</div>
+  </div>
+  <div class="compare-summary-card">
+    <div class="compare-summary-title">{{ label_b }}</div>
+    <div class="compare-summary-val">
+      {{ "%.2f"|format(sum_b or 0) }}
+      <small style="font-size:13px;font-weight:400;color:var(--text-muted);"> грн</small>
+    </div>
+    <div class="stat-meta">{{ count_b }} чеків</div>
+  </div>
+</div>
+
+<!-- Viz controls -->
+<div class="viz-controls">
+  <div class="viz-toolbar">
+    <button class="viz-btn" data-viz="grouped" onclick="switchViz('grouped')" title="Порівняння по категоріях">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="10" width="4" height="12"/><rect x="9" y="6" width="4" height="16"/>
+        <rect x="16" y="3" width="4" height="19"/>
+      </svg>
+      Стовпці
+    </button>
+    <button class="viz-btn" data-viz="stacked" onclick="switchViz('stacked')" title="Накладені стовпці">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="2" width="7" height="20"/><rect x="14" y="2" width="7" height="20"/>
+      </svg>
+      Накладені
+    </button>
+    <button class="viz-btn" data-viz="pie" onclick="switchViz('pie')" title="Дві кругові діаграми">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>
+      </svg>
+      Кругові
+    </button>
+    <button class="viz-btn" data-viz="line" onclick="switchViz('line')" title="Тренд по днях">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      Тренд
+    </button>
+    <button class="viz-btn" data-viz="table" onclick="switchViz('table')" title="Детальна таблиця">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>
+        <line x1="9" y1="3" x2="9" y2="21"/>
+      </svg>
+      Таблиця
+    </button>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-wrap">
+    <button class="settings-toggle" id="settingsToggle" onclick="toggleSettings()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+      Налаштування
+    </button>
+
+    <div class="settings-panel" id="settingsPanel" style="display:none;">
+      <div class="settings-section">
+        <div class="settings-section-label">Категорії</div>
+        <div class="cat-pills" id="catPills"></div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-label">Показник</div>
+        <div class="metric-row">
+          <button class="metric-btn" data-metric="sum" onclick="setMetric('sum')">Сума, грн</button>
+          <button class="metric-btn" data-metric="count" onclick="setMetric('count')">Кількість</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Viz area -->
+<div class="viz-area" id="vizArea">
+
+  <!-- Grouped bar -->
+  <div id="vizGrouped" style="display:none;">
+    <div class="card chart-container">
+      <div class="card-title" style="margin-bottom:14px;" id="groupedTitle"></div>
+      <div style="height:320px;position:relative;"><canvas id="groupedChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Stacked bar -->
+  <div id="vizStacked" style="display:none;">
+    <div class="card chart-container">
+      <div class="card-title" style="margin-bottom:14px;" id="stackedTitle"></div>
+      <div style="height:320px;position:relative;"><canvas id="stackedChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Two pies -->
+  <div id="vizPie" style="display:none;">
+    <div class="pies-grid">
+      <div class="card chart-container">
+        <div class="card-title" style="margin-bottom:8px;">{{ label_a }}</div>
+        <div class="chart-canvas-wrap"><canvas id="pieAChart"></canvas></div>
+        <div class="legend-list" id="legendA"></div>
+      </div>
+      <div class="card chart-container">
+        <div class="card-title" style="margin-bottom:8px;">{{ label_b }}</div>
+        <div class="chart-canvas-wrap"><canvas id="pieBChart"></canvas></div>
+        <div class="legend-list" id="legendB"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Line trend -->
+  <div id="vizLine" style="display:none;">
+    <div class="card chart-container">
+      <div class="card-title" style="margin-bottom:14px;">Тренд по днях місяця</div>
+      <div style="height:300px;position:relative;"><canvas id="lineChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div id="vizTable" style="display:none;">
+    <div class="card">
+      <div class="table-wrap">
+        <table id="cmpTable">
+          <thead>
+            <tr>
+              <th>Категорія</th>
+              <th id="hA">{{ label_a }}</th>
+              <th id="hB">{{ label_b }}</th>
+              <th>Різниця</th>
+            </tr>
+          </thead>
+          <tbody id="cmpTbody"></tbody>
+          <tfoot id="cmpTfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- viz-area -->
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ═══ Data from backend ══════════════════════════════════════════════ */
+const ALL_DATA  = {{ comparison  | tojson }};
+const DAILY_A   = {{ daily_a    | tojson }};
+const DAILY_B   = {{ daily_b    | tojson }};
+const LABEL_A   = {{ (label_a or '') | tojson }};
+const LABEL_B   = {{ (label_b or '') | tojson }};
+const MONTH_A   = {{ (month_a or '') | tojson }};
+const MONTH_B   = {{ (month_b or '') | tojson }};
+const SUM_A     = {{ sum_a or 0 }};
+const SUM_B     = {{ sum_b or 0 }};
+
+const PALETTE = ['#4f6ef7','#22c55e','#f59e0b','#ef4444','#8b5cf6',
+                 '#06b6d4','#ec4899','#84cc16','#f97316','#64748b'];
+
+/* ═══ State ══════════════════════════════════════════════════════════ */
+const LS_STATE  = 'cmp_settings';
+const LS_MON_A  = 'cmp_month_a';
+const LS_MON_B  = 'cmp_month_b';
+
+const defaultState = {
+  vizType:    'grouped',
+  metric:     'sum',
+  hiddenCats: [],
+};
+
+let STATE = Object.assign({}, defaultState);
+let charts = {};
+let settingsOpen = false;
+
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_STATE) || '{}');
+    STATE = Object.assign({}, defaultState, s);
+  } catch(e) {}
+}
+function saveState() {
+  localStorage.setItem(LS_STATE, JSON.stringify(STATE));
+}
+
+/* ═══ Month selectors ════════════════════════════════════════════════ */
+const selA = document.getElementById('selA');
+const selB = document.getElementById('selB');
+
+function syncDropdowns() {
+  const a = selA ? selA.value : '';
+  const b = selB ? selB.value : '';
+  if (selA) Array.from(selA.options).forEach(o => { o.disabled = o.value !== '' && o.value === b; });
+  if (selB) Array.from(selB.options).forEach(o => { o.disabled = o.value !== '' && o.value === a; });
+  const btn = document.getElementById('btnCompare');
+  if (btn) btn.disabled = !a || !b;
+}
+
+function doCompare() {
+  const a = selA ? selA.value : '';
+  const b = selB ? selB.value : '';
+  if (!a || !b) return;
+  localStorage.setItem(LS_MON_A, a);
+  localStorage.setItem(LS_MON_B, b);
+  window.location.href = `/compare?month_a=${encodeURIComponent(a)}&month_b=${encodeURIComponent(b)}`;
+}
+
+function clearStorage() {
+  localStorage.removeItem(LS_MON_A);
+  localStorage.removeItem(LS_MON_B);
+}
+
+// Restore saved months in selectors
+function restoreMonthSelectors() {
+  if (!selA || !selB) return;
+  if (!MONTH_A) {
+    const sa = localStorage.getItem(LS_MON_A);
+    const sb = localStorage.getItem(LS_MON_B);
+    if (sa) selA.value = sa;
+    if (sb) selB.value = sb;
+  }
+  syncDropdowns();
+}
+
+if (selA) selA.addEventListener('change', syncDropdowns);
+if (selB) selB.addEventListener('change', syncDropdowns);
+restoreMonthSelectors();
+
+/* ═══ Settings panel ═════════════════════════════════════════════════ */
+function toggleSettings() {
+  const panel = document.getElementById('settingsPanel');
+  const toggle = document.getElementById('settingsToggle');
+  if (!panel) return;
+  if (settingsOpen) {
+    closeSettings();
+  } else {
+    // Force animation restart: reset animation, then reflow, then show
+    panel.style.animation = 'none';
+    panel.style.display = 'block';
+    void panel.offsetWidth;                    // reflow triggers animation restart
+    panel.style.animation = '';
+    toggle.classList.add('open');
+    settingsOpen = true;
+  }
+}
+function closeSettings() {
+  const panel  = document.getElementById('settingsPanel');
+  const toggle = document.getElementById('settingsToggle');
+  if (!panel || !settingsOpen) return;
+  panel.classList.add('closing');
+  setTimeout(() => {
+    panel.style.display = 'none';
+    panel.classList.remove('closing');
+  }, 140);
+  toggle.classList.remove('open');
+  settingsOpen = false;
+}
+document.addEventListener('click', e => {
+  const wrap = document.querySelector('.settings-wrap');
+  if (settingsOpen && wrap && !wrap.contains(e.target)) closeSettings();
+});
+
+/* ═══ Category pills ══════════════════════════════════════════════════ */
+function buildCatPills() {
+  const wrap = document.getElementById('catPills');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const cats = ALL_DATA.map(r => r.category);
+  cats.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'cat-pill' + (STATE.hiddenCats.includes(cat) ? '' : ' on');
+    btn.textContent = cat;
+    btn.onclick = () => toggleCat(cat, btn);
+    wrap.appendChild(btn);
+  });
+}
+function toggleCat(cat, btn) {
+  const idx = STATE.hiddenCats.indexOf(cat);
+  if (idx > -1) { STATE.hiddenCats.splice(idx, 1); btn.classList.add('on'); }
+  else           { STATE.hiddenCats.push(cat);      btn.classList.remove('on'); }
+  saveState();
+  renderViz();
+}
+
+/* ═══ Metric & Labels ════════════════════════════════════════════════ */
+function setMetric(m) {
+  STATE.metric = m;
+  saveState();
+  document.querySelectorAll('.metric-btn[data-metric]').forEach(b =>
+    b.classList.toggle('active', b.dataset.metric === m));
+  renderViz();
+}
+function syncSettingsUI() {
+  document.querySelectorAll('.metric-btn[data-metric]').forEach(b =>
+    b.classList.toggle('active', b.dataset.metric === STATE.metric));
+}
+
+/* ═══ Filtered data helpers ══════════════════════════════════════════ */
+function filteredData() {
+  return ALL_DATA.filter(r => !STATE.hiddenCats.includes(r.category));
+}
+function metricVal(row, ab) {
+  return STATE.metric === 'sum'
+    ? (ab === 'a' ? row.total_a : row.total_b) || 0
+    : (ab === 'a' ? row.count_a : row.count_b) || 0;
+}
+function metricLabel() {
+  return STATE.metric === 'sum' ? 'грн' : 'чеків';
+}
+
+/* ═══ Destroy charts ═════════════════════════════════════════════════ */
+function destroyAll() {
+  Object.values(charts).forEach(c => { if (c) c.destroy(); });
+  charts = {};
+}
+
+/* ═══ Switch visualization ═══════════════════════════════════════════ */
+function switchViz(type) {
+  STATE.vizType = type;
+  saveState();
+  document.querySelectorAll('.viz-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.viz === type));
+
+  const area = document.getElementById('vizArea');
+  area.classList.add('fading');
+  setTimeout(() => {
+    area.classList.remove('fading');
+    destroyAll();
+    showVizSection(type);
+    renderViz();
+  }, 160);
+}
+
+function showVizSection(type) {
+  ['vizGrouped','vizStacked','vizPie','vizLine','vizTable'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const map = { grouped:'vizGrouped', stacked:'vizStacked', pie:'vizPie', line:'vizLine', table:'vizTable' };
+  const el = document.getElementById(map[type]);
+  if (el) el.style.display = 'block';
+}
+
+/* ═══ Render functions ═══════════════════════════════════════════════ */
+function chartOpts(extra) {
+  return Object.assign({
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 400 },
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.formattedValue} ${metricLabel()}` } },
+    },
+  }, extra);
+}
+
+/* ── Grouped bar ────────────────────────────────────────────────────── */
+function renderGrouped() {
+  const data = filteredData();
+  const cats = data.map(r => r.category);
+  const va   = data.map(r => metricVal(r, 'a'));
+  const vb   = data.map(r => metricVal(r, 'b'));
+  const title = document.getElementById('groupedTitle');
+  if (title) title.textContent = `Порівняння по категоріях (${metricLabel()})`;
+
+  charts.grouped = new Chart(document.getElementById('groupedChart'), {
+    type: 'bar',
+    data: {
+      labels: cats,
+      datasets: [
+        { label: LABEL_A, data: va, backgroundColor: 'rgba(79,110,247,0.2)', borderColor: '#4f6ef7', borderWidth: 2, borderRadius: 5 },
+        { label: LABEL_B, data: vb, backgroundColor: 'rgba(239,68,68,0.15)', borderColor: '#ef4444', borderWidth: 2, borderRadius: 5 },
+      ]
+    },
+    options: chartOpts({
+      plugins: {
+        legend: { display: true, position: 'top', labels: { font: { size: 12 }, padding: 16 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.formattedValue} ${metricLabel()}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#9ca3af' } },
+        y: { grid: { color: '#f0f2f8' }, ticks: { font: { size: 11 }, color: '#9ca3af' } },
+      }
+    })
+  });
+}
+
+/* ── Stacked bar ─────────────────────────────────────────────────────
+   X-вісь = категорії, місяці A і Б накладені всередині кожної
+────────────────────────────────────────────────────────────────────── */
+function renderStacked() {
+  const data = filteredData();
+  const cats = data.map(r => r.category);
+  const va   = data.map(r => metricVal(r, 'a'));
+  const vb   = data.map(r => metricVal(r, 'b'));
+
+  const title = document.getElementById('stackedTitle');
+  if (title) title.textContent = `Накладені витрати по категоріях (${metricLabel()})`;
+
+  charts.stacked = new Chart(document.getElementById('stackedChart'), {
+    type: 'bar',
+    data: {
+      labels: cats,
+      datasets: [
+        {
+          label: LABEL_A,
+          data: va,
+          backgroundColor: 'rgba(79,110,247,0.75)',
+          borderColor: '#4f6ef7',
+          borderWidth: 1,
+          borderRadius: { topLeft: 0, topRight: 0 },
+          stack: 'months',
+        },
+        {
+          label: LABEL_B,
+          data: vb,
+          backgroundColor: 'rgba(239,68,68,0.65)',
+          borderColor: '#ef4444',
+          borderWidth: 1,
+          borderRadius: { topLeft: 4, topRight: 4 },
+          stack: 'months',
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: { font: { size: 12 }, padding: 16 },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.formattedValue} ${metricLabel()}`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: { font: { size: 11 }, color: '#9ca3af' },
+        },
+        y: {
+          stacked: true,
+          grid: { color: '#f0f2f8' },
+          ticks: { font: { size: 11 }, color: '#9ca3af' },
+        }
+      }
+    }
+  });
+}
+
+/* ── Pie ────────────────────────────────────────────────────────────── */
+function renderPie() {
+  const data = filteredData();
+  const cats = data.map(r => r.category);
+  const va   = data.map(r => metricVal(r, 'a'));
+  const vb   = data.map(r => metricVal(r, 'b'));
+  const colors = cats.map((_, i) => PALETTE[i % PALETTE.length]);
+
+  function makePie(canvasId, vals) {
+    return new Chart(document.getElementById(canvasId), {
+      type: 'doughnut',
+      data: { labels: cats, datasets: [{ data: vals, backgroundColor: colors, borderColor: '#fff', borderWidth: 2 }] },
+      options: {
+        cutout: '60%',
+        animation: { duration: 400 },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.formattedValue} ${metricLabel()}` } }
+        }
+      }
+    });
+  }
+
+  function makeLegend(elId, vals) {
+    const total = vals.reduce((s, v) => s + v, 0);
+    const el = document.getElementById(elId);
+    el.innerHTML = '';
+    cats.forEach((cat, i) => {
+      const div = document.createElement('div');
+      div.className = 'legend-item';
+      const pct = total > 0 ? Math.round(vals[i] / total * 100) : 0;
+      div.innerHTML = `
+        <div class="legend-dot" style="background:${colors[i]}"></div>
+        <span class="legend-name">${cat}</span>
+        <span class="legend-amount">${vals[i].toFixed(2)}</span>
+        <span class="legend-pct">${pct}%</span>`;
+      el.appendChild(div);
+    });
+  }
+
+  charts.pieA = makePie('pieAChart', va);
+  charts.pieB = makePie('pieBChart', vb);
+  makeLegend('legendA', va);
+  makeLegend('legendB', vb);
+}
+
+/* ── Line trend ──────────────────────────────────────────────────────
+   Якщо немає денних даних — показуємо empty state замість порожнього графіку
+────────────────────────────────────────────────────────────────────── */
+function renderLine() {
+  const lineEl = document.getElementById('vizLine');
+
+  if (!DAILY_A.length && !DAILY_B.length) {
+    const existing = lineEl.querySelector('.empty-state');
+    if (!existing) {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = '<div class="empty-state"><div class="icon-lg">📅</div><p>Немає денних даних для обраних місяців.</p></div>';
+      lineEl.appendChild(el);
+    }
+    return;
+  }
+
+  // Fill days 1..31 for smooth axis
+  const allDays = Array.from({ length: 31 }, (_, i) => i + 1);
+  const key = r => STATE.metric === 'sum' ? r.total : r.count;
+  const mapA = Object.fromEntries(DAILY_A.map(r => [r.day, key(r)]));
+  const mapB = Object.fromEntries(DAILY_B.map(r => [r.day, key(r)]));
+
+  // Only show days where at least one month has data
+  const activeDays = allDays.filter(d => mapA[d] !== undefined || mapB[d] !== undefined);
+
+  charts.line = new Chart(document.getElementById('lineChart'), {
+    type: 'line',
+    data: {
+      labels: activeDays,
+      datasets: [
+        {
+          label: LABEL_A,
+          data: activeDays.map(d => mapA[d] ?? 0),
+          borderColor: '#4f6ef7',
+          backgroundColor: 'rgba(79,110,247,0.08)',
+          tension: 0.35,
+          fill: true,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          spanGaps: true,
+        },
+        {
+          label: LABEL_B,
+          data: activeDays.map(d => mapB[d] ?? 0),
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.06)',
+          tension: 0.35,
+          fill: true,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          spanGaps: true,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { font: { size: 12 }, padding: 16 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.formattedValue} ${metricLabel()}` } }
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'День місяця', color: '#9ca3af', font: { size: 11 } },
+          grid: { display: false },
+          ticks: { color: '#9ca3af', font: { size: 11 } },
+        },
+        y: {
+          grid: { color: '#f0f2f8' },
+          ticks: { color: '#9ca3af', font: { size: 11 } },
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+}
+
+/* ── Table ──────────────────────────────────────────────────────────── */
+function renderTable() {
+  const data = filteredData();
+  const tbody = document.getElementById('cmpTbody');
+  const tfoot = document.getElementById('cmpTfoot');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+  let sumA = 0, sumB = 0;
+
+  data.forEach(row => {
+    const va = metricVal(row, 'a');
+    const vb = metricVal(row, 'b');
+    const diff = vb - va;
+    sumA += va; sumB += vb;
+    const diffHtml = diff > 0
+      ? `<span class="diff-pos">+${diff.toFixed(2)}</span>`
+      : diff < 0
+        ? `<span class="diff-neg">${diff.toFixed(2)}</span>`
+        : `<span class="diff-zero">0.00</span>`;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="badge">${row.category}</span></td>
+      <td class="amount-cell">${va > 0 ? va.toFixed(2) + ' ' + metricLabel() : '<span class="muted">—</span>'}</td>
+      <td class="amount-cell">${vb > 0 ? vb.toFixed(2) + ' ' + metricLabel() : '<span class="muted">—</span>'}</td>
+      <td>${diffHtml}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted);">Немає даних</td></tr>';
+  }
+
+  const totalDiff = sumB - sumA;
+  const tdiffHtml = totalDiff > 0
+    ? `<span class="diff-pos">+${totalDiff.toFixed(2)}</span>`
+    : totalDiff < 0
+      ? `<span class="diff-neg">${totalDiff.toFixed(2)}</span>`
+      : `<span class="diff-zero">0.00</span>`;
+
+  tfoot.innerHTML = `<tr class="table-total-row">
+    <td>Разом</td>
+    <td class="amount-cell">${sumA.toFixed(2)} ${metricLabel()}</td>
+    <td class="amount-cell">${sumB.toFixed(2)} ${metricLabel()}</td>
+    <td>${tdiffHtml}</td>
+  </tr>`;
+}
+
+/* ═══ Main render dispatch ═══════════════════════════════════════════ */
+function renderViz() {
+  destroyAll();   // завжди знищуємо старі графіки перед рендером
+  switch(STATE.vizType) {
+    case 'grouped': renderGrouped(); break;
+    case 'stacked': renderStacked(); break;
+    case 'pie':     renderPie();     break;
+    case 'line':    renderLine();    break;
+    case 'table':   renderTable();   break;
+  }
+}
+
+/* ═══ Init (only if results shown) ═══════════════════════════════════ */
+{% if month_a and month_b %}
+loadState();
+buildCatPills();
+syncSettingsUI();
+
+document.querySelectorAll('.viz-btn').forEach(b =>
+  b.classList.toggle('active', b.dataset.viz === STATE.vizType));
+
+showVizSection(STATE.vizType);
+renderViz();
+{% endif %}
+</script>
+{% endblock %}

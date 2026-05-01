@@ -11,74 +11,51 @@
   {% block head %}{% endblock %}
 </head>
 <body>
-<div class="layout">
 
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <div class="logo-mark">
-        <span>🧾</span>
-        Receipt
-      </div>
-      <div class="logo-sub">Трекер витрат</div>
-    </div>
+  <!-- Top Navigation -->
+  <nav class="topnav">
+    <a href="{{ url_for('index') }}" class="nav-logo">
+      <div class="nav-logo-mark">🧾</div>
+      Receipt
+    </a>
 
-    <nav class="sidebar-nav">
-      <div class="nav-section-label">Навігація</div>
-
+    <div class="nav-links">
       <a href="{{ url_for('receipts') }}"
-         class="nav-item {% if request.endpoint == 'receipts' %}active{% endif %}">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
-          <rect x="9" y="3" width="6" height="4" rx="1"/>
-          <line x1="9" y1="12" x2="15" y2="12"/>
-          <line x1="9" y1="16" x2="13" y2="16"/>
-        </svg>
+         class="nav-link {% if request.endpoint == 'receipts' %}active{% endif %}">
         Чеки
       </a>
-
       <a href="{{ url_for('stats') }}"
-         class="nav-item {% if request.endpoint == 'stats' %}active{% endif %}">
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <line x1="18" y1="20" x2="18" y2="10"/>
-          <line x1="12" y1="20" x2="12" y2="4"/>
-          <line x1="6"  y1="20" x2="6"  y2="14"/>
-        </svg>
+         class="nav-link {% if request.endpoint == 'stats' %}active{% endif %}">
         Статистика
       </a>
-    </nav>
-
-    <div class="sidebar-footer">
-      <a href="{{ url_for('logout') }}" class="sidebar-user">
-        <div class="user-avatar">
-          {{ session.email[0].upper() if session.email else '?' }}
-        </div>
-        <div class="user-info">
-          <div class="user-email">{{ session.email }}</div>
-          <div class="user-role">Вийти з акаунту</div>
-        </div>
+      <a href="{{ url_for('compare') }}"
+         class="nav-link {% if request.endpoint == 'compare' %}active{% endif %}">
+        Порівняння
       </a>
     </div>
-  </aside>
 
-  <!-- Main -->
-  <div class="main">
-    <header class="topbar">
+    <div class="nav-right">
+      <span class="nav-user-email">{{ session.email }}</span>
+      <a href="{{ url_for('logout') }}" class="nav-logout">Вийти</a>
+    </div>
+  </nav>
+
+  <div class="page-wrap">
+    <div class="page-header">
       <div>
         <div class="page-title">{% block page_title %}{% endblock %}</div>
         <div class="page-subtitle">{% block page_subtitle %}{% endblock %}</div>
       </div>
       <div class="gap-row">
-        {% block topbar_actions %}{% endblock %}
+        {% block page_actions %}{% endblock %}
       </div>
-    </header>
+    </div>
 
     <div class="content">
       {% block content %}{% endblock %}
     </div>
   </div>
 
-</div>
 {% block scripts %}{% endblock %}
 </body>
 </html>

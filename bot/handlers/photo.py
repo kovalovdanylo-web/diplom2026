@@ -5,7 +5,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from aiogram import Bot, F, Router
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import CLAUDE_MODEL
 from database import register_user, save_receipt, log_api_usage, auth_get_by_telegram
@@ -71,6 +71,7 @@ async def handle_photo(message: Message, bot: Bot):
 
         # Зберігаємо кожен чек та формуємо відповідь
         response_parts = []
+        saved_ids = []   # (receipt_id, label) для кнопок видалення
 
         new_count = 0
         updated_count = 0
@@ -95,6 +96,12 @@ async def handle_photo(message: Message, bot: Bot):
                 new_count += 1
             else:
                 updated_count += 1
+
+            # Мітка для кнопки видалення
+            btn_label = f"Чек {i}" if total_count > 1 else "Чек"
+            if r.get("amount") is not None:
+                btn_label += f" {r['amount']:.2f} грн"
+            saved_ids.append((receipt_id, btn_label))
 
             # Формуємо текст для одного чеку
             if total_count > 1:
@@ -143,7 +150,21 @@ async def handle_photo(message: Message, bot: Bot):
 
         response += "\n\n/menu"
 
-        await status_msg.edit_text(response, parse_mode="HTML", disable_web_page_preview=True)
+        # Кнопки видалення — по одній на кожен чек
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"🗑 Видалити {label}",
+                callback_data=f"del_ask:{rid}"
+            )]
+            for rid, label in saved_ids
+        ])
+
+        await status_msg.edit_text(
+            response,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=keyboard,
+        )
 
     except Exception as e:
         logger.error("Помилка обробки фото: %s", e, exc_info=True)

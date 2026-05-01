@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Головна{% endblock %}
+{% block page_title %}{% endblock %}
+{% block page_subtitle %}{% endblock %}
+
+{% block content %}
+
+<!-- Hero -->
+<div class="home-hero">
+  <div class="home-hero-mark">🧾</div>
+  <div class="home-hero-title">Receipt Tracker</div>
+  <div class="home-hero-sub">
+    Система обліку витрат на основі фіскальних чеків.<br>
+    Скануйте чеки через Telegram-бот — дані автоматично з'являються тут.
+  </div>
+  <div class="home-hero-actions">
+    <a href="{{ url_for('receipts') }}" class="hero-btn hero-btn-primary">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+        <rect x="9" y="3" width="6" height="4" rx="1"/>
+      </svg>
+      Переглянути чеки
+    </a>
+    <a href="{{ url_for('stats') }}" class="hero-btn hero-btn-ghost">
+      Статистика →
+    </a>
+    <a href="{{ url_for('compare') }}" class="hero-btn hero-btn-ghost">
+      Порівняння →
+    </a>
+  </div>
+</div>
+
+<!-- Quick stats -->
+<div class="stat-grid" style="margin-bottom:24px;">
+  <div class="stat-card">
+    <div class="stat-label">Чеків збережено</div>
+    <div class="stat-value">{{ summary.count or 0 }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Загальна сума</div>
+    <div class="stat-value accent">{{ "%.2f"|format(summary.total_sum or 0) }}</div>
+    <div class="stat-meta">грн</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Місяців відстежено</div>
+    <div class="stat-value">{{ summary.months_count or 0 }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Середній чек</div>
+    <div class="stat-value">
+      {% if summary.count %}
+        {{ "%.2f"|format((summary.total_sum or 0) / summary.count) }}
+      {% else %}0.00{% endif %}
+    </div>
+    <div class="stat-meta">грн</div>
+  </div>
+</div>
+
+<!-- Navigation cards -->
+<div class="nav-cards">
+
+  <a href="{{ url_for('receipts') }}" class="nav-card">
+    <div class="nav-card-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+        <rect x="9" y="3" width="6" height="4" rx="1"/>
+        <line x1="9" y1="12" x2="15" y2="12"/>
+        <line x1="9" y1="16" x2="13" y2="16"/>
+      </svg>
+    </div>
+    <div class="nav-card-title">Чеки</div>
+    <div class="nav-card-desc">Повна таблиця всіх збережених чеків з фільтрами по місяцю та категорії. Налаштуйте видимість колонок і сортування.</div>
+    <div class="nav-card-arrow">Відкрити <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+  </a>
+
+  <a href="{{ url_for('stats') }}" class="nav-card">
+    <div class="nav-card-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <line x1="18" y1="20" x2="18" y2="10"/>
+        <line x1="12" y1="20" x2="12" y2="4"/>
+        <line x1="6"  y1="20" x2="6"  y2="14"/>
+      </svg>
+    </div>
+    <div class="nav-card-title">Статистика</div>
+    <div class="nav-card-desc">Кругова діаграма витрат по категоріях і стовпчаста по місяцях. Фільтрація по окремому місяцю.</div>
+    <div class="nav-card-arrow">Відкрити <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+  </a>
+
+  <a href="{{ url_for('compare') }}" class="nav-card">
+    <div class="nav-card-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <rect x="2" y="3" width="9" height="18" rx="1"/>
+        <rect x="13" y="3" width="9" height="18" rx="1"/>
+      </svg>
+    </div>
+    <div class="nav-card-title">Порівняння</div>
+    <div class="nav-card-desc">Порівняйте два місяці між собою. Стовпці, накладені діаграми, кругові, тренд по днях — оберіть зручну візуалізацію.</div>
+    <div class="nav-card-arrow">Відкрити <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>
+  </a>
+
+</div>
+
+<!-- Bottom grid: recent + top cats + how it works -->
+<div class="home-grid">
+
+  <!-- Recent receipts -->
+  <div class="card">
+    <div class="card-header" style="padding-bottom:12px;">
+      <div class="card-title">Останні чеки</div>
+      <a href="{{ url_for('receipts') }}" style="font-size:12px;color:var(--accent);">Всі →</a>
+    </div>
+    {% if recent %}
+    <div class="recent-list">
+      {% for r in recent %}
+      <div class="recent-item">
+        <div class="recent-dot"></div>
+        <div class="recent-meta">
+          <div class="recent-cat">{{ r.category or 'Без категорії' }}</div>
+          <div class="recent-date">{{ r.receipt_date or '—' }}{% if r.receipt_time %} · {{ r.receipt_time[:5] }}{% endif %}</div>
+        </div>
+        <div class="recent-amt">
+          {% if r.amount %}{{ "%.2f"|format(r.amount) }}{% else %}—{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:32px 20px;">
+      <div class="icon-lg">🧾</div>
+      <p>Надішліть фото чеку боту щоб розпочати.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right column: top categories + how it works -->
+  <div style="display:flex;flex-direction:column;gap:18px;">
+
+    <!-- Top categories -->
+    {% if top_cats %}
+    <div class="card">
+      <div class="card-header" style="padding-bottom:14px;">
+        <div class="card-title">Топ категорій</div>
+        <a href="{{ url_for('stats') }}" style="font-size:12px;color:var(--accent);">Детальніше →</a>
+      </div>
+      <div class="card-body" style="padding-top:4px;">
+        <div class="top-cat-list">
+          {% set max_total = top_cats[0].total %}
+          {% for cat in top_cats %}
+          <div class="top-cat-item">
+            <div class="top-cat-row">
+              <span class="top-cat-name">{{ cat.category }}</span>
+              <span class="top-cat-amt">{{ "%.2f"|format(cat.total) }} грн</span>
+            </div>
+            <div class="top-cat-bar-wrap">
+              <div class="top-cat-bar" style="width:{{ (cat.total / max_total * 100)|int }}%"></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- How it works -->
+    <div class="card">
+      <div class="card-header" style="padding-bottom:14px;">
+        <div class="card-title">Як це працює</div>
+      </div>
+      <div class="card-body" style="padding-top:4px;">
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div>
+              <div class="step-title">Фотографуєте чек</div>
+              <div class="step-desc">Надсилаєте фото чеку в Telegram-бот. Один знімок може містити кілька чеків.</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div>
+              <div class="step-title">Бот розпізнає дані</div>
+              <div class="step-desc">QR-код або Claude Vision AI витягують суму, дату, категорію та інші дані.</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div>
+              <div class="step-title">Аналізуєте тут</div>
+              <div class="step-desc">Всі чеки зберігаються на цій платформі. Фільтруйте, порівнюйте, дивіться тренди.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

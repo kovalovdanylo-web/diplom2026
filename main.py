@@ -1,38 +1,21 @@
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
-
-from config import BOT_TOKEN, DEBUG
+from config import config
 from database import init_db
-from bot import get_router
+from bot import BotApp
 
 
-async def main():
-    log_level = logging.DEBUG if DEBUG else logging.INFO
+async def main() -> None:
     logging.basicConfig(
-        level=log_level,
+        level=logging.DEBUG if config.debug else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    logger = logging.getLogger(__name__)
-
+    logging.getLogger(__name__).info("Ініціалізація бази даних...")
     await init_db()
-    logger.info("База даних готова")
 
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.include_router(get_router())
-
-    logger.info("Бот запущено. Очікування повідомлень...")
-
-    try:
-        await dp.start_polling(
-            bot,
-            allowed_updates=["message", "callback_query"],
-        )
-    finally:
-        await bot.session.close()
+    app = BotApp(config)
+    await app.run()
 
 
 if __name__ == "__main__":
