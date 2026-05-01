@@ -3,13 +3,18 @@ import io
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from aiogram import Bot, F, Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import CLAUDE_MODEL
-from database import register_user, save_receipt, log_api_usage, auth_get_by_telegram
+from database import db, register_user, save_receipt, log_api_usage, auth_get_by_telegram
 from utils.claude_scanner import scan_receipt
+
+# Директорія для збереження фото на диску
+PHOTOS_DIR = Path(__file__).parent.parent.parent / "photos"
+PHOTOS_DIR.mkdir(exist_ok=True)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -39,6 +44,12 @@ async def handle_photo(message: Message, bot: Bot):
         file_bytes = io.BytesIO()
         await bot.download_file(file.file_path, file_bytes)
         image_bytes = file_bytes.getvalue()
+
+        # Зберігаємо фото на диск
+        photo_filename = f"{photo.file_id}.jpg"
+        photo_path = PHOTOS_DIR / photo_filename
+        if not photo_path.exists():
+            photo_path.write_bytes(image_bytes)
 
         # Викликаємо scan_receipt в окремому потоці (синхронний API)
         loop = asyncio.get_event_loop()
@@ -97,13 +108,25 @@ async def handle_photo(message: Message, bot: Bot):
             else:
                 updated_count += 1
 
+            # Зберігаємо фото в таблицю receipt_photos
+            await db.photos.save(
+                receipt_id=receipt_id,
+                file_path=photo_filename,
+                photo_file_id=photo.file_id,
+            )
+
+            # Зберігаємо товари в таблицю receipt_items
+            items = r.get("items") or []
+            if items:
+                await db.items.save(receipt_id, items)
+
             # Мітка для кнопки видалення
             btn_label = f"Чек {i}" if total_count > 1 else "Чек"
             if r.get("amount") is not None:
                 btn_label += f" {r['amount']:.2f} грн"
             saved_ids.append((receipt_id, btn_label))
 
-            # Формуємо текст для одного чеку
+            # Формуємо текст — без HTML parse_mode, URL Telegram зробить клікабельним сам
             if total_count > 1:
                 status = "🆕" if is_new else "🔄"
                 part = f"📄 Чек {i} з {total_count} {status}:\n"
@@ -132,7 +155,7 @@ async def handle_photo(message: Message, bot: Bot):
                 part += f"🏷 Категорія: {r['category']}\n"
 
             if r["qr_link"]:
-                part += f"🔗 <a href=\"{r['qr_link']}\">Перевірити на сайті ДПС</a>\n"
+                part += f"🔗 {r['qr_link']}\n"
 
             response_parts.append(part)
 
@@ -161,7 +184,6 @@ async def handle_photo(message: Message, bot: Bot):
 
         await status_msg.edit_text(
             response,
-            parse_mode="HTML",
             disable_web_page_preview=True,
             reply_markup=keyboard,
         )

@@ -15,6 +15,7 @@ import bcrypt
 from flask import (
     Flask, render_template, request,
     redirect, url_for, session, g, jsonify,
+    send_from_directory,
 )
 
 # Гарантуємо що корінь проєкту є в sys.path незалежно від робочої директорії
@@ -24,7 +25,8 @@ if _PROJECT_ROOT not in sys.path:
 
 from config import config
 
-_DB_PATH = str(Path(__file__).parent.parent / config.db_path)
+_DB_PATH    = str(Path(__file__).parent.parent / config.db_path)
+_PHOTOS_DIR = str(Path(__file__).parent.parent / "photos")
 
 _UA_MONTHS_FULL = [
     '', 'Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень',
@@ -185,6 +187,33 @@ class WebDatabase:
         ).fetchone()
         cat_map = {r["category"]: {"total": r["total"] or 0, "count": r["cnt"]} for r in rows}
         return cat_map, s["cnt"] or 0, s["s"] or 0
+
+    def items_by_receipt(self, receipt_id: int) -> list:
+        return self.connection().execute(
+            "SELECT * FROM receipt_items WHERE receipt_id=? ORDER BY id",
+            (receipt_id,),
+        ).fetchall()
+
+    def photos_by_receipt(self, receipt_id: int) -> list:
+        return self.connection().execute(
+            "SELECT * FROM receipt_photos WHERE receipt_id=? ORDER BY id DESC",
+            (receipt_id,),
+        ).fetchall()
+
+    def items_top(self, auth_id: int, limit: int = 10) -> list:
+        return self.connection().execute(
+            """SELECT ri.name,
+                      ROUND(SUM(ri.total_price), 2) as total,
+                      ROUND(SUM(ri.quantity), 2) as qty,
+                      COUNT(*) as cnt
+               FROM receipt_items ri
+               JOIN receipts r ON r.id = ri.receipt_id
+               WHERE r.auth_id = ? AND ri.name IS NOT NULL
+               GROUP BY ri.name
+               ORDER BY total DESC
+               LIMIT ?""",
+            (auth_id, limit),
+        ).fetchall()
 
     def receipts_daily(self, auth_id: int, month_str: str) -> list:
         if not month_str:
@@ -351,7 +380,29 @@ def create_app() -> Flask:
             summary=web_db.receipts_summary(auth_id, extra, params),
             months=web_db.receipts_months(auth_id),
             selected_month=selected_month,
+            top_products=web_db.items_top(auth_id),
         )
+
+    @app.route("/photos/<path:filename>")
+    def serve_photo(filename):
+        """Роздає збережені фото чеків."""
+        return send_from_directory(_PHOTOS_DIR, filename)
+
+    @app.route("/api/receipt/<int:receipt_id>")
+    @login_required
+    def receipt_detail(receipt_id):
+        """JSON: товари та фото для конкретного чеку."""
+        auth_id = session["auth_id"]
+        owner = web_db.connection().execute(
+            "SELECT id FROM receipts WHERE id=? AND auth_id=?",
+            (receipt_id, auth_id),
+        ).fetchone()
+        if not owner:
+            return jsonify({"error": "not found"}), 404
+
+        items  = [dict(r) for r in web_db.items_by_receipt(receipt_id)]
+        photos = [dict(r) for r in web_db.photos_by_receipt(receipt_id)]
+        return jsonify({"items": items, "photos": photos})
 
     @app.route("/compare")
     @login_required

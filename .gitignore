@@ -34,3 +34,6 @@ test_images/
 
 # Claude Code
 .claude/
+
+# Збережені фото чеків
+photos/

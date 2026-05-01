@@ -53,6 +53,32 @@
   </div>
 </div>
 
+{% if top_products %}
+<div class="card mb-4" style="margin-bottom:20px;">
+  <div class="card-header">
+    <div class="card-title">Топ товарів</div>
+    <span style="font-size:12px;color:var(--text-muted);">за сумою витрат</span>
+  </div>
+  <div class="card-body" style="padding-top:14px;">
+    <div class="top-cat-list">
+      {% set max_total = top_products[0].total %}
+      {% for p in top_products %}
+      <div class="top-cat-item">
+        <div class="top-cat-row">
+          <span class="top-cat-name">{{ p.name }}</span>
+          <span style="font-size:12px;color:var(--text-muted);margin:0 12px;">× {{ "%.0f"|format(p.qty) }}</span>
+          <span class="top-cat-amt">{{ "%.2f"|format(p.total) }} грн</span>
+        </div>
+        <div class="top-cat-bar-wrap">
+          <div class="top-cat-bar" style="width:{{ (p.total / max_total * 100)|int }}%"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if cat_stats or month_stats %}
 <div class="charts-grid">
 

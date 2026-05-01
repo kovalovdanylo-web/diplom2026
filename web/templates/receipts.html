@@ -91,6 +91,7 @@
           <th class="col-sn col-hidden">ЗН</th>
           <th class="col-qr">QR</th>
           <th style="width:40px;"></th>
+          <th style="width:36px;"></th>
         </tr>
       </thead>
       <tbody>
@@ -131,6 +132,24 @@
                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
               </svg>
             </button>
+          </td>
+          <td>
+            <button class="expand-btn" id="exp-{{ r.id }}" title="Деталі"
+                    onclick="toggleDetail({{ r.id }}, this)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+          </td>
+        </tr>
+        <!-- Detail row -->
+        <tr class="detail-row" id="detail-{{ r.id }}">
+          <td colspan="11">
+            <div class="detail-panel" id="panel-{{ r.id }}">
+              <div class="detail-inner" id="inner-{{ r.id }}">
+                <div style="color:var(--text-muted);font-size:12px;">Завантаження...</div>
+              </div>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -320,6 +339,106 @@ async function doDelete(ids) {
     console.error('Delete failed', e);
   }
 }
+
+/* ── Receipt detail expand ──────────────────────────────────────── */
+const _detailCache = {};
+
+async function toggleDetail(id, btn) {
+  const panel = document.getElementById('panel-' + id);
+  const inner = document.getElementById('inner-' + id);
+  const isOpen = panel.classList.contains('open');
+
+  if (isOpen) {
+    panel.classList.remove('open');
+    btn.classList.remove('open');
+    return;
+  }
+
+  btn.classList.add('open');
+  panel.classList.add('open');
+
+  if (_detailCache[id]) {
+    renderDetail(inner, _detailCache[id]);
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/receipt/' + id);
+    const data = await resp.json();
+    _detailCache[id] = data;
+    renderDetail(inner, data);
+  } catch(e) {
+    inner.innerHTML = '<div style="color:var(--danger);font-size:12px;">Помилка завантаження</div>';
+  }
+}
+
+function renderDetail(container, data) {
+  const { items, photos } = data;
+
+  // Items table
+  let itemsHtml = '<div>';
+  itemsHtml += '<div class="detail-section-title">Товари</div>';
+  if (items && items.length) {
+    itemsHtml += '<table class="items-table"><thead><tr>';
+    itemsHtml += '<th>Назва</th><th>Код</th><th style="text-align:right">К-сть</th><th style="text-align:right">Ціна</th><th style="text-align:right">Сума</th>';
+    itemsHtml += '</tr></thead><tbody>';
+    items.forEach(it => {
+      itemsHtml += `<tr>
+        <td>${escHtml(it.name || '—')}</td>
+        <td style="color:var(--text-muted);font-size:11px;">${escHtml(it.code || '—')}</td>
+        <td class="num">${it.quantity != null ? Number(it.quantity).toFixed(3).replace(/\.?0+$/, '') : '—'}</td>
+        <td class="num">${it.unit_price != null ? Number(it.unit_price).toFixed(2) + ' грн' : '—'}</td>
+        <td class="num" style="font-weight:600;">${it.total_price != null ? Number(it.total_price).toFixed(2) + ' грн' : '—'}</td>
+      </tr>`;
+    });
+    itemsHtml += '</tbody></table>';
+  } else {
+    itemsHtml += '<div class="photo-empty">Дані про товари відсутні</div>';
+  }
+  itemsHtml += '</div>';
+
+  // Photos
+  let photosHtml = '<div>';
+  photosHtml += '<div class="detail-section-title">Фото чеку</div>';
+  if (photos && photos.length) {
+    photosHtml += '<div class="photo-gallery">';
+    photos.forEach(p => {
+      const src = '/photos/' + p.file_path;
+      photosHtml += `<img class="photo-thumb" src="${src}" alt="Фото чеку"
+                          onclick="openLightbox('${src}')" loading="lazy">`;
+    });
+    photosHtml += '</div>';
+  } else {
+    photosHtml += '<div class="photo-empty">Фото відсутні</div>';
+  }
+  photosHtml += '</div>';
+
+  container.innerHTML = itemsHtml + photosHtml;
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ── Lightbox ───────────────────────────────────────────────────── */
+function openLightbox(src) {
+  let lb = document.getElementById('lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.className = 'lightbox';
+    lb.innerHTML = '<span class="lightbox-close" onclick="closeLightbox()">×</span><img id="lb-img">';
+    lb.addEventListener('click', e => { if (e.target === lb) closeLightbox(); });
+    document.body.appendChild(lb);
+  }
+  document.getElementById('lb-img').src = src;
+  lb.classList.add('open');
+}
+function closeLightbox() {
+  const lb = document.getElementById('lightbox');
+  if (lb) lb.classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 /* ── Table sort ─────────────────────────────────────────────────── */
 let sortCol = -1, sortDir = 1;

@@ -13,10 +13,13 @@ import io
 import json
 import logging
 import re
+import xml.etree.ElementTree as ET
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
 import anthropic
+import requests
+from bs4 import BeautifulSoup
 from PIL import Image, ImageFilter
 
 try:
@@ -54,18 +57,49 @@ class ReceiptScanner:
     2. Fallback → Claude Vision API (платно)
     """
 
+    _CATEGORY_GUIDE = (
+        "food=супермаркет/продуктовий магазин/Сільпо/АТБ/Novus/Фора/Ашан/Metro/Varus; "
+        "transport=АЗС/паливо/бензин/дизель/газ для авто/Укрнафта/ОККО/WOG/Shell/Socar/БРСМ/UPG/"
+        "Укртатнафта/ANP/таксі/Uber/Bolt/паркування/маршрутка/метро/залізниця/Укрзалізниця; "
+        "cafe=кафе/ресторан/піцерія/суші/фастфуд/McDonald's/KFC/Burger King/Domino's/"
+        "кавʼярня/Starbucks/Coffee Life/місце де їдять на місці; "
+        "pharmacy=аптека/Аптека 9-1-1/Аптека Доброго Дня/АНЦ/медичні товари/ліки/вітаміни; "
+        "entertainment=кіно/Multiplex/Планета Кіно/театр/концерт/спортклуб/фітнес/"
+        "спортивний магазин/Decathlon/ігри/Steam/підписки/Netflix; "
+        "clothing=одяг/взуття/аксесуари/H&M/Zara/LC Waikiki/New Yorker/магазин одягу; "
+        "household=побутова хімія/госптовари/Comfy/Foxtrot/Eldorado/меблі/IKEA/"
+        "будматеріали/Епіцентр/Нова Лінія/електроніка; "
+        "other=все що не підходить під жодну категорію вище"
+    )
+
+    _CRITICAL_RULES = (
+        "КРИТИЧНІ ПРАВИЛА (порушувати заборонено):\n"
+        "- АЗС, будь-яке паливо, Укрнафта/ОККО/WOG/Shell/Socar/БРСМ/UPG → transport\n"
+        "- Аптека, ліки, медтовари → pharmacy (навіть якщо там є косметика)\n"
+        "- Кафе/ресторан/фастфуд → cafe (навіть якщо схоже на магазин)\n"
+        "- Супермаркет/продуктовий → food (навіть якщо є побутова хімія серед товарів)\n"
+        "- Одяг/взуття → clothing (навіть якщо в ТЦ разом з іншим)\n"
+        "- Comfy/Foxtrot/Eldorado/Епіцентр → household\n"
+        "- Сумнів між двома → обирай ту що більше відповідає назві магазину на чеку"
+    )
+
     _RECEIPT_PROMPT = (
         f"Фото українського чеку. Витягни дані з КОЖНОГО чеку на фото.\n"
         f"rn=номер чеку, fn=фіскальний номер (10 цифр), sn=заводський номер, "
         f"d=дата DD.MM.YYYY, t=час HH:MM:SS, a=сума числом, q=URL з QR або null, "
-        f"c=категорія ({_CATEGORY_KEYS}).\n"
+        f"c=категорія ({_CATEGORY_KEYS}), "
+        f"items=список товарів [{{'n':назва,'q':кількість,'p':ціна_за_од,'t':сума_рядка}}] або [].\n"
+        f"Категорії: {_CATEGORY_GUIDE}\n"
+        f"{_CRITICAL_RULES}\n"
         f"Відсутнє=null. Тільки JSON без пояснень.\n"
-        f'[{{"rn":"...","fn":"...","sn":"...","d":"...","t":"...","a":0.00,"q":null,"c":"food"}}]'
+        f'[{{"rn":"...","fn":"...","sn":"...","d":"...","t":"...","a":0.00,"q":null,"c":"food",'
+        f'"items":[{{"n":"Молоко","q":1.0,"p":35.00,"t":35.00}}]}}]'
     )
 
     _CATEGORY_PROMPT = (
         f"На фото чек(и). Визнач категорію кожного.\n"
-        f"Категорії: {_CATEGORY_KEYS}.\n"
+        f"Категорії: {_CATEGORY_GUIDE}\n"
+        f"{_CRITICAL_RULES}\n"
         f"Якщо чеків кілька — перелічи через кому зліва направо.\n"
         f"Відповідай ТІЛЬКИ ключами через кому. Приклад: food або food,transport"
     )
@@ -99,6 +133,8 @@ class ReceiptScanner:
                     )
                     for r, cat in zip(receipts, cats):
                         r["category"] = cat
+                        # Завантажуємо товари з XML ДПС
+                        r["items"] = self._fetch_xml_items(r["qr_link"]) if r.get("qr_link") else []
 
                     logger.info("Розпізнано %d чек(ів) з QR", len(receipts))
                     return self._make_result(receipts, "qr", in_tok, out_tok)
@@ -197,6 +233,60 @@ class ReceiptScanner:
         except Exception as e:
             logger.warning("Помилка парсингу QR URL: %s", e)
             return None
+
+    def _fetch_xml_items(self, qr_url: str) -> list[dict]:
+        """
+        Завантажує XML з сайту ДПС cabinet.tax.gov.ua і витягує список товарів.
+        Алгоритм: GET сторінка чеку → знайти кнопку завантаження XML → GET XML → парсинг.
+        """
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; ReceiptBot/1.0)"}
+            page = requests.get(qr_url, timeout=10, headers=headers)
+            page.raise_for_status()
+
+            soup = BeautifulSoup(page.text, "html.parser")
+            xml_url = None
+
+            # Шукаємо посилання з .xml або кнопку завантаження
+            for tag in soup.find_all("a", href=True):
+                href = tag.get("href", "")
+                text = tag.get_text(strip=True).lower()
+                if ".xml" in href.lower() or "xml" in text or "завантажити" in text or "download" in text.lower():
+                    xml_url = href if href.startswith("http") else "https://cabinet.tax.gov.ua" + href
+                    break
+
+            if not xml_url:
+                logger.debug("Кнопку XML не знайдено на сторінці ДПС")
+                return []
+
+            xml_resp = requests.get(xml_url, timeout=10, headers=headers)
+            xml_resp.raise_for_status()
+
+            root = ET.fromstring(xml_resp.content)
+            items = []
+
+            for row in root.iter("ROW"):
+                name  = row.findtext("NAME")  or row.findtext("GOODS_NAME") or ""
+                code  = row.findtext("CODE")  or row.findtext("GOODS_CODE") or None
+                qty   = self._safe_float(row.findtext("AMOUNT")   or row.findtext("QUANTITY") or "1") or 1.0
+                price = self._safe_float(row.findtext("PRICE")    or "0") or 0.0
+                cost  = self._safe_float(row.findtext("COST")     or row.findtext("SUM") or "0") or 0.0
+
+                if name.strip():
+                    items.append({
+                        "name":        name.strip(),
+                        "code":        code,
+                        "quantity":    qty,
+                        "unit_price":  price,
+                        "total_price": cost,
+                    })
+
+            logger.info("XML ДПС: знайдено %d товарів", len(items))
+            return items
+
+        except Exception as e:
+            logger.warning("Не вдалося отримати XML товарів з ДПС: %s", e)
+            return []
 
     def _classify_category(self, image_bytes: bytes, count: int) -> tuple:
         """Визначає категорії через мінімальний запит до Claude."""
@@ -305,6 +395,21 @@ class ReceiptScanner:
         for item in data:
             def g(s, f):
                 return item.get(s) or item.get(f)
+
+            # Товари з чеку
+            raw_items = item.get("items") or []
+            parsed_items = []
+            for it in raw_items:
+                name = it.get("n") or it.get("name") or ""
+                if name.strip():
+                    parsed_items.append({
+                        "name":        name.strip(),
+                        "code":        it.get("code"),
+                        "quantity":    self._safe_float(it.get("q") or it.get("quantity")) or 1.0,
+                        "unit_price":  self._safe_float(it.get("p") or it.get("unit_price")) or 0.0,
+                        "total_price": self._safe_float(it.get("t") or it.get("total_price")) or 0.0,
+                    })
+
             results.append({
                 "receipt_number": g("rn", "receipt_number"),
                 "fiscal_number":  g("fn", "fiscal_number"),
@@ -316,6 +421,7 @@ class ReceiptScanner:
                 "category":       CATEGORIES.get(
                     (g("c", "category") or "").strip().lower(), _CATEGORY_DEFAULT
                 ),
+                "items":          parsed_items,
             })
         return results
 

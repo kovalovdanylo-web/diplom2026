@@ -1,11 +1,13 @@
 """
 База даних — Repository Pattern.
 
-Database — фасад з чотирма репозиторіями:
-  • UserRepository    — таблиця users
-  • AuthRepository    — таблиця auth
-  • ReceiptRepository — таблиця receipts
-  • ApiUsageRepository — таблиця api_usage
+Database — фасад з шістьма репозиторіями:
+  • UserRepository         — таблиця users
+  • AuthRepository         — таблиця auth
+  • ReceiptRepository      — таблиця receipts
+  • ApiUsageRepository     — таблиця api_usage
+  • ReceiptItemsRepository — таблиця receipt_items (товари з чеків)
+  • ReceiptPhotosRepository — таблиця receipt_photos (фото чеків)
 """
 import logging
 from typing import Optional
@@ -313,6 +315,91 @@ class ReceiptRepository(_BaseRepository):
 
 
 # ─────────────────────────────────────────────────────────────
+# Репозиторій товарів у чеку
+# ─────────────────────────────────────────────────────────────
+
+class ReceiptItemsRepository(_BaseRepository):
+    """Операції з таблицею receipt_items."""
+
+    async def save(self, receipt_id: int, items: list[dict]) -> None:
+        """Зберігає список товарів. Перезаписує існуючі для цього чеку."""
+        if not items:
+            return
+        db = await self._connect()
+        try:
+            await db.execute(
+                "DELETE FROM receipt_items WHERE receipt_id = ?", (receipt_id,)
+            )
+            await db.executemany(
+                """INSERT INTO receipt_items
+                       (receipt_id, name, code, quantity, unit_price, total_price)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        receipt_id,
+                        i.get("name"),
+                        i.get("code"),
+                        i.get("quantity"),
+                        i.get("unit_price"),
+                        i.get("total_price"),
+                    )
+                    for i in items
+                    if i.get("name")
+                ],
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def get_by_receipt(self, receipt_id: int) -> list[dict]:
+        """Повертає всі товари для чеку."""
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                "SELECT * FROM receipt_items WHERE receipt_id = ? ORDER BY id",
+                (receipt_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            await db.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# Репозиторій фото чеків
+# ─────────────────────────────────────────────────────────────
+
+class ReceiptPhotosRepository(_BaseRepository):
+    """Операції з таблицею receipt_photos."""
+
+    async def save(self, receipt_id: int, file_path: str, photo_file_id: str = None) -> None:
+        """Додає запис про фото чеку."""
+        db = await self._connect()
+        try:
+            await db.execute(
+                """INSERT INTO receipt_photos (receipt_id, file_path, photo_file_id)
+                   VALUES (?, ?, ?)""",
+                (receipt_id, file_path, photo_file_id),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def get_by_receipt(self, receipt_id: int) -> list[dict]:
+        """Повертає всі фото для чеку (від нового до старого)."""
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                "SELECT * FROM receipt_photos WHERE receipt_id = ? ORDER BY id DESC",
+                (receipt_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            await db.close()
+
+
+# ─────────────────────────────────────────────────────────────
 # Репозиторій використання API
 # ─────────────────────────────────────────────────────────────
 
@@ -357,6 +444,8 @@ class Database:
         self.auth     = AuthRepository(db_path)
         self.receipts = ReceiptRepository(db_path)
         self.api      = ApiUsageRepository(db_path)
+        self.items    = ReceiptItemsRepository(db_path)
+        self.photos   = ReceiptPhotosRepository(db_path)
 
     async def init(self) -> None:
         """Ініціалізація схеми БД — створення таблиць та міграції."""
@@ -407,8 +496,29 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (auth_id) REFERENCES auth(id)
                 );
-                CREATE INDEX IF NOT EXISTS idx_receipts_date    ON receipts(receipt_date);
-                CREATE INDEX IF NOT EXISTS idx_auth_email       ON auth(email);
+                CREATE TABLE IF NOT EXISTS receipt_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    code TEXT,
+                    quantity REAL,
+                    unit_price REAL,
+                    total_price REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS receipt_photos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_id INTEGER NOT NULL,
+                    file_path TEXT NOT NULL,
+                    photo_file_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_receipts_date     ON receipts(receipt_date);
+                CREATE INDEX IF NOT EXISTS idx_auth_email        ON auth(email);
+                CREATE INDEX IF NOT EXISTS idx_items_receipt_id  ON receipt_items(receipt_id);
+                CREATE INDEX IF NOT EXISTS idx_photos_receipt_id ON receipt_photos(receipt_id);
             """)
             await conn.commit()
 
