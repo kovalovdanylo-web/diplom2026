@@ -13,6 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.handlers import commands, photo
 from bot.handlers.auth import router as auth_router
+from bot.handlers.manual import router as manual_router
 from bot.middleware import AuthMiddleware
 from config import AppConfig
 
@@ -53,6 +54,7 @@ class BotApp:
         main_router.message.middleware(AuthMiddleware())
         main_router.include_router(commands.router)
         main_router.include_router(photo.router)
+        main_router.include_router(manual_router)
 
         root = Router()
         root.include_router(auth_router)

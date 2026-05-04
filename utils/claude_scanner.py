@@ -13,13 +13,10 @@ import io
 import json
 import logging
 import re
-import xml.etree.ElementTree as ET
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
 import anthropic
-import requests
-from bs4 import BeautifulSoup
 from PIL import Image, ImageFilter
 
 try:
@@ -133,8 +130,7 @@ class ReceiptScanner:
                     )
                     for r, cat in zip(receipts, cats):
                         r["category"] = cat
-                        # Завантажуємо товари з XML ДПС
-                        r["items"] = self._fetch_xml_items(r["qr_link"]) if r.get("qr_link") else []
+                        r["items"] = []
 
                     logger.info("Розпізнано %d чек(ів) з QR", len(receipts))
                     return self._make_result(receipts, "qr", in_tok, out_tok)
@@ -233,60 +229,6 @@ class ReceiptScanner:
         except Exception as e:
             logger.warning("Помилка парсингу QR URL: %s", e)
             return None
-
-    def _fetch_xml_items(self, qr_url: str) -> list[dict]:
-        """
-        Завантажує XML з сайту ДПС cabinet.tax.gov.ua і витягує список товарів.
-        Алгоритм: GET сторінка чеку → знайти кнопку завантаження XML → GET XML → парсинг.
-        """
-        try:
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; ReceiptBot/1.0)"}
-            page = requests.get(qr_url, timeout=10, headers=headers)
-            page.raise_for_status()
-
-            soup = BeautifulSoup(page.text, "html.parser")
-            xml_url = None
-
-            # Шукаємо посилання з .xml або кнопку завантаження
-            for tag in soup.find_all("a", href=True):
-                href = tag.get("href", "")
-                text = tag.get_text(strip=True).lower()
-                if ".xml" in href.lower() or "xml" in text or "завантажити" in text or "download" in text.lower():
-                    xml_url = href if href.startswith("http") else "https://cabinet.tax.gov.ua" + href
-                    break
-
-            if not xml_url:
-                logger.debug("Кнопку XML не знайдено на сторінці ДПС")
-                return []
-
-            xml_resp = requests.get(xml_url, timeout=10, headers=headers)
-            xml_resp.raise_for_status()
-
-            root = ET.fromstring(xml_resp.content)
-            items = []
-
-            for row in root.iter("ROW"):
-                name  = row.findtext("NAME")  or row.findtext("GOODS_NAME") or ""
-                code  = row.findtext("CODE")  or row.findtext("GOODS_CODE") or None
-                qty   = self._safe_float(row.findtext("AMOUNT")   or row.findtext("QUANTITY") or "1") or 1.0
-                price = self._safe_float(row.findtext("PRICE")    or "0") or 0.0
-                cost  = self._safe_float(row.findtext("COST")     or row.findtext("SUM") or "0") or 0.0
-
-                if name.strip():
-                    items.append({
-                        "name":        name.strip(),
-                        "code":        code,
-                        "quantity":    qty,
-                        "unit_price":  price,
-                        "total_price": cost,
-                    })
-
-            logger.info("XML ДПС: знайдено %d товарів", len(items))
-            return items
-
-        except Exception as e:
-            logger.warning("Не вдалося отримати XML товарів з ДПС: %s", e)
-            return []
 
     def _classify_category(self, image_bytes: bytes, count: int) -> tuple:
         """Визначає категорії через мінімальний запит до Claude."""

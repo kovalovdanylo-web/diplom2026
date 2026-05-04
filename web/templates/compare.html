@@ -10,40 +10,40 @@
 {% block content %}
 {% set ua_full = ['','Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'] %}
 
-<!-- Month selectors -->
+<!-- Period selectors -->
 <div class="compare-selectors">
   <div class="compare-selector-card">
-    <div class="compare-selector-label">Місяць А</div>
-    <select id="selA">
-      <option value="">Оберіть місяць</option>
-      {% for m in months %}
-      {% set parts = m.ym.split('-') %}
-      <option value="{{ m.ym }}" {% if m.ym == month_a %}selected{% endif %}>
-        {{ ua_full[parts[1]|int] }} {{ parts[0] }}
-      </option>
-      {% endfor %}
+    <div class="compare-selector-label">Період А</div>
+    <div class="period-type-btns" style="margin-bottom:8px;">
+      <button class="period-type-btn" id="typeA_month"   onclick="setSideType('A','month')">Місяць</button>
+      <button class="period-type-btn" id="typeA_quarter" onclick="setSideType('A','quarter')">Квартал</button>
+      <button class="period-type-btn" id="typeA_year"    onclick="setSideType('A','year')">Рік</button>
+    </div>
+    <select id="selA" style="width:100%;padding:8px 12px;border:1px solid var(--card-border);
+            border-radius:var(--radius-sm);background:var(--bg);font-size:13.5px;font-weight:500;outline:none;">
+      <option value="">Оберіть період</option>
     </select>
   </div>
 
   <div class="compare-vs">vs</div>
 
   <div class="compare-selector-card">
-    <div class="compare-selector-label">Місяць Б</div>
-    <select id="selB">
-      <option value="">Оберіть місяць</option>
-      {% for m in months %}
-      {% set parts = m.ym.split('-') %}
-      <option value="{{ m.ym }}" {% if m.ym == month_b %}selected{% endif %}>
-        {{ ua_full[parts[1]|int] }} {{ parts[0] }}
-      </option>
-      {% endfor %}
+    <div class="compare-selector-label">Період Б</div>
+    <div class="period-type-btns" style="margin-bottom:8px;">
+      <button class="period-type-btn" id="typeB_month"   onclick="setSideType('B','month')">Місяць</button>
+      <button class="period-type-btn" id="typeB_quarter" onclick="setSideType('B','quarter')">Квартал</button>
+      <button class="period-type-btn" id="typeB_year"    onclick="setSideType('B','year')">Рік</button>
+    </div>
+    <select id="selB" style="width:100%;padding:8px 12px;border:1px solid var(--card-border);
+            border-radius:var(--radius-sm);background:var(--bg);font-size:13.5px;font-weight:500;outline:none;">
+      <option value="">Оберіть період</option>
     </select>
   </div>
 </div>
 
 <div class="compare-actions">
   <button class="btn-compare" id="btnCompare" onclick="doCompare()">Порівняти</button>
-  {% if month_a and month_b %}
+  {% if period_a and period_b %}
   <a href="{{ url_for('compare') }}" class="btn btn-ghost" onclick="clearStorage()">Скинути</a>
   {% endif %}
 </div>
@@ -210,8 +210,10 @@ const DAILY_A   = {{ daily_a    | tojson }};
 const DAILY_B   = {{ daily_b    | tojson }};
 const LABEL_A   = {{ (label_a or '') | tojson }};
 const LABEL_B   = {{ (label_b or '') | tojson }};
-const MONTH_A   = {{ (month_a or '') | tojson }};
-const MONTH_B   = {{ (month_b or '') | tojson }};
+const TYPE_A    = {{ (type_a  or 'month') | tojson }};
+const TYPE_B    = {{ (type_b  or 'month') | tojson }};
+const PERIOD_A  = {{ (period_a or '') | tojson }};
+const PERIOD_B  = {{ (period_b or '') | tojson }};
 const SUM_A     = {{ sum_a or 0 }};
 const SUM_B     = {{ sum_b or 0 }};
 
@@ -243,48 +245,113 @@ function saveState() {
   localStorage.setItem(LS_STATE, JSON.stringify(STATE));
 }
 
-/* ═══ Month selectors ════════════════════════════════════════════════ */
-const selA = document.getElementById('selA');
-const selB = document.getElementById('selB');
+/* ═══ Period selectors ═══════════════════════════════════════════════ */
+const MONTHS_RAW = {{ months | map(attribute='ym') | list | tojson }};
+const UA_SHORT   = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'];
 
-function syncDropdowns() {
-  const a = selA ? selA.value : '';
-  const b = selB ? selB.value : '';
-  if (selA) Array.from(selA.options).forEach(o => { o.disabled = o.value !== '' && o.value === b; });
-  if (selB) Array.from(selB.options).forEach(o => { o.disabled = o.value !== '' && o.value === a; });
+let sideTypeA = TYPE_A || 'month';
+let sideTypeB = TYPE_B || 'month';
+
+function buildSideOptions(side, type, currentVal) {
+  const sel = document.getElementById('sel' + side);
+  sel.innerHTML = '<option value="">Оберіть період</option>';
+  const opts = getPeriodOptions(type);
+  opts.forEach(({label, value}) => {
+    const o = new Option(label, value);
+    if (value === currentVal) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function getPeriodOptions(type) {
+  if (type === 'month') {
+    return MONTHS_RAW.map(m => {
+      const [y, mo] = m.split('-');
+      return {label: `${UA_SHORT[parseInt(mo)]} ${y}`, value: m};
+    });
+  } else if (type === 'quarter') {
+    const seen = new Set(); const res = [];
+    MONTHS_RAW.forEach(m => {
+      const [y, mo] = m.split('-');
+      const q = Math.ceil(parseInt(mo)/3);
+      const val = `${y}-Q${q}`;
+      if (!seen.has(val)) { seen.add(val); res.push({label:`Q${q} ${y}`, value: val}); }
+    });
+    return res;
+  } else {
+    const seen = new Set(); const res = [];
+    MONTHS_RAW.forEach(m => {
+      const y = m.split('-')[0];
+      if (!seen.has(y)) { seen.add(y); res.push({label: y, value: y}); }
+    });
+    return res;
+  }
+}
+
+function setSideType(side, type) {
+  if (side === 'A') sideTypeA = type;
+  else sideTypeB = type;
+  ['month','quarter','year'].forEach(t => {
+    const btn = document.getElementById(`type${side}_${t}`);
+    if (btn) btn.classList.toggle('active', t === type);
+  });
+  buildSideOptions(side, type, '');
+  syncCompareBtn();
+}
+
+function activateSideType(side, type) {
+  ['month','quarter','year'].forEach(t => {
+    const btn = document.getElementById(`type${side}_${t}`);
+    if (btn) btn.classList.toggle('active', t === type);
+  });
+}
+
+function syncCompareBtn() {
+  const a = document.getElementById('selA')?.value;
+  const b = document.getElementById('selB')?.value;
   const btn = document.getElementById('btnCompare');
   if (btn) btn.disabled = !a || !b;
 }
 
 function doCompare() {
-  const a = selA ? selA.value : '';
-  const b = selB ? selB.value : '';
+  const a = document.getElementById('selA')?.value;
+  const b = document.getElementById('selB')?.value;
   if (!a || !b) return;
+  localStorage.setItem('cmp_type_a', sideTypeA);
+  localStorage.setItem('cmp_type_b', sideTypeB);
   localStorage.setItem(LS_MON_A, a);
   localStorage.setItem(LS_MON_B, b);
-  window.location.href = `/compare?month_a=${encodeURIComponent(a)}&month_b=${encodeURIComponent(b)}`;
+  window.location.href = `/compare?type_a=${sideTypeA}&period_a=${encodeURIComponent(a)}&type_b=${sideTypeB}&period_b=${encodeURIComponent(b)}`;
 }
 
 function clearStorage() {
-  localStorage.removeItem(LS_MON_A);
-  localStorage.removeItem(LS_MON_B);
+  ['cmp_type_a','cmp_type_b',LS_MON_A,LS_MON_B].forEach(k => localStorage.removeItem(k));
 }
 
-// Restore saved months in selectors
-function restoreMonthSelectors() {
+// Init selectors
+function initSelectors() {
+  const selA = document.getElementById('selA');
+  const selB = document.getElementById('selB');
   if (!selA || !selB) return;
-  if (!MONTH_A) {
-    const sa = localStorage.getItem(LS_MON_A);
-    const sb = localStorage.getItem(LS_MON_B);
-    if (sa) selA.value = sa;
-    if (sb) selB.value = sb;
-  }
-  syncDropdowns();
+
+  // Restore from URL or localStorage
+  const rta = PERIOD_A ? sideTypeA : (localStorage.getItem('cmp_type_a') || 'month');
+  const rtb = PERIOD_B ? sideTypeB : (localStorage.getItem('cmp_type_b') || 'month');
+  const rpa = PERIOD_A || localStorage.getItem(LS_MON_A) || '';
+  const rpb = PERIOD_B || localStorage.getItem(LS_MON_B) || '';
+
+  sideTypeA = rta; sideTypeB = rtb;
+  activateSideType('A', rta);
+  activateSideType('B', rtb);
+  buildSideOptions('A', rta, rpa);
+  buildSideOptions('B', rtb, rpb);
+
+  selA.addEventListener('change', syncCompareBtn);
+  selB.addEventListener('change', syncCompareBtn);
+  syncCompareBtn();
 }
 
-if (selA) selA.addEventListener('change', syncDropdowns);
-if (selB) selB.addEventListener('change', syncDropdowns);
-restoreMonthSelectors();
+initSelectors();
 
 /* ═══ Settings panel ═════════════════════════════════════════════════ */
 function toggleSettings() {

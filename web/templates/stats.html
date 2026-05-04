@@ -1,34 +1,92 @@
 {% extends "base.html" %}
 {% block title %}Статистика{% endblock %}
 {% block page_title %}Статистика{% endblock %}
-{% block page_subtitle %}
-  {%- if selected_month %}
-    {% set parts = selected_month.split('-') %}
-    {% set ua = ['','Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'] %}
-    {{ ua[parts[1]|int] }} {{ parts[0] }}
-  {%- else %}Загальна аналітика{%- endif %}
-{% endblock %}
+{% block page_subtitle %}{{ period_label or 'Загальна аналітика' }}{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 {% endblock %}
 
 {% block page_actions %}
-{% set ua = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'] %}
-<form method="GET" action="{{ url_for('stats') }}" class="toolbar">
-  <select class="filter-select" name="month" onchange="this.form.submit()">
+<div class="period-selector" id="periodSelector">
+  <div class="period-type-btns">
+    <button class="period-type-btn {% if period_type=='month' %}active{% endif %}"
+            onclick="setPeriodType('month')">Місяць</button>
+    <button class="period-type-btn {% if period_type=='quarter' %}active{% endif %}"
+            onclick="setPeriodType('quarter')">Квартал</button>
+    <button class="period-type-btn {% if period_type=='year' %}active{% endif %}"
+            onclick="setPeriodType('year')">Рік</button>
+  </div>
+  <select class="filter-select" id="periodValue" onchange="applyPeriod()">
     <option value="">Весь час</option>
-    {% for m in months %}
-    {% set parts = m.ym.split('-') %}
-    <option value="{{ m.ym }}" {% if m.ym == selected_month %}selected{% endif %}>
-      {{ ua[parts[1]|int] }} {{ parts[0] }}
-    </option>
-    {% endfor %}
   </select>
-  {% if selected_month %}
+  {% if period %}
   <a href="{{ url_for('stats') }}" class="btn btn-ghost">Скинути</a>
   {% endif %}
-</form>
+</div>
+
+<script>
+const MONTHS_RAW = {{ months | map(attribute='ym') | list | tojson }};
+const UA_SHORT   = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру'];
+let _periodType  = {{ period_type | tojson }};
+let _period      = {{ period | tojson }};
+
+function buildOptions(type) {
+  const sel = document.getElementById('periodValue');
+  sel.innerHTML = '<option value="">Весь час</option>';
+  if (type === 'month') {
+    MONTHS_RAW.forEach(m => {
+      const [y, mo] = m.split('-');
+      const opt = new Option(`${UA_SHORT[parseInt(mo)]} ${y}`, m);
+      if (m === _period) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } else if (type === 'quarter') {
+    const seen = new Set();
+    MONTHS_RAW.forEach(m => {
+      const [y, mo] = m.split('-');
+      const q = Math.ceil(parseInt(mo)/3);
+      const val = `${y}-Q${q}`;
+      if (!seen.has(val)) {
+        seen.add(val);
+        const opt = new Option(`Q${q} ${y}`, val);
+        if (val === _period) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    });
+  } else {
+    const seen = new Set();
+    MONTHS_RAW.forEach(m => {
+      const y = m.split('-')[0];
+      if (!seen.has(y)) {
+        seen.add(y);
+        const opt = new Option(y, y);
+        if (y === _period) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    });
+  }
+}
+
+function setPeriodType(type) {
+  _periodType = type;
+  _period = '';
+  document.querySelectorAll('.period-type-btn').forEach(b =>
+    b.classList.toggle('active', b.textContent.trim() === {month:'Місяць',quarter:'Квартал',year:'Рік'}[type])
+  );
+  buildOptions(type);
+}
+
+function applyPeriod() {
+  const p = document.getElementById('periodValue').value;
+  const url = new URL(window.location.href);
+  url.searchParams.set('period_type', _periodType);
+  url.searchParams.set('period', p);
+  window.location.href = url.toString();
+}
+
+buildOptions(_periodType);
+</script>
 {% endblock %}
 
 {% block content %}

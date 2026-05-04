@@ -2,7 +2,8 @@ import logging
 from datetime import datetime
 
 from aiogram import Router, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import (
@@ -31,12 +32,54 @@ async def cmd_menu(message: Message):
     """Головне меню."""
     await message.answer(
         "📋 <b>Меню</b>\n\n"
+        "/add — додати чек\n"
         "/total — статистика витрат\n"
         "/help — довідка\n"
-        "/logout — вийти з акаунту\n\n"
-        "📸 Надішліть фото чеку щоб розпочати.",
+        "/logout — вийти з акаунту",
         parse_mode="HTML",
     )
+
+
+@router.message(Command("add"))
+async def cmd_add(message: Message):
+    """Підменю додавання чеку."""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📸 Сканувати фото", callback_data="add_method:scan"),
+        InlineKeyboardButton(text="✏️ Вручну",         callback_data="add_method:manual"),
+    ]])
+    await message.answer(
+        "➕ <b>Додати чек</b>\n\nОберіть спосіб введення:",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data.startswith("add_method:"))
+async def cb_add_method(callback: CallbackQuery, state: FSMContext):
+    method = callback.data.split(":")[1]
+    await callback.answer()
+    if method == "scan":
+        await callback.message.edit_text(
+            "📸 Надішліть фото чеку — бот розпізнає його автоматично.\n\n"
+            "Поради:\n"
+            "• Фотографуйте при хорошому освітленні\n"
+            "• Тримайте камеру рівно над чеком\n"
+            "• На одному фото може бути кілька чеків\n\n"
+            "Якщо фото нечітке — спробуйте /add → Вручну"
+        )
+    else:
+        # Запускаємо FSM ручного вводу
+        from bot.handlers.manual import _skip_keyboard, AddReceiptStates
+        await state.clear()
+        await state.set_state(AddReceiptStates.receipt_number)
+        await callback.message.edit_text(
+            "✏️ <b>Ручне введення чеку</b>\n\n"
+            "🔢 Введіть номер чеку\n"
+            "<i>(номер після «ЧЕК №» на чеку)</i>",
+            parse_mode="HTML",
+            reply_markup=_skip_keyboard("receipt_number"),
+        )
+
 
 
 @router.message(Command("help"))
@@ -54,6 +97,7 @@ async def cmd_help(message: Message):
         "• Уникайте тіней та відблисків\n\n"
         "<b>📋 Команди:</b>\n"
         "/start — привітання та вхід в акаунт\n"
+        "/add — додати чек (фото або вручну)\n"
         "/total — загальна статистика витрат\n"
         "/menu — головне меню\n"
         "/help — ця довідка\n"
@@ -150,11 +194,11 @@ async def cb_del_no(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.text)
+@router.message(F.text, StateFilter(None))
 async def catch_text(message: Message):
-    """Catch-all для будь-якого тексту — підказка користувачу."""
+    """Catch-all для тексту поза FSM-станами."""
     await message.answer(
-        "📸 Надішліть фото чеку щоб розпочати.\n\n"
-        "Доступні команди:\n"
-        "/total /menu /help /logout"
+        "📸 Надішліть фото чеку або:\n"
+        "/add — обрати спосіб додавання\n"
+        "/menu — всі команди"
     )

@@ -35,6 +35,13 @@
   {% endif %}
 </form>
 
+<a href="{{ url_for('receipts_add') }}" class="btn btn-primary">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+  Додати
+</a>
+
 <!-- Column visibility toggle -->
 <div class="col-panel-wrap" id="colWrap">
   <button class="btn btn-ghost" id="colBtn" onclick="toggleColPanel(event)">
@@ -90,7 +97,8 @@
           <th class="col-fn col-hidden">ФН</th>
           <th class="col-sn col-hidden">ЗН</th>
           <th class="col-qr">QR</th>
-          <th style="width:40px;"></th>
+          <th style="width:36px;"></th>
+          <th style="width:36px;"></th>
           <th style="width:36px;"></th>
         </tr>
       </thead>
@@ -122,6 +130,15 @@
               </svg>
             </a>
             {% else %}—{% endif %}
+          </td>
+          <td>
+            <button class="del-btn" title="Редагувати" onclick="openEdit({{ r.id }})"
+                    style="color:var(--text-light);">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
           </td>
           <td>
             <button class="del-btn" title="Видалити" onclick="askDelete(this, {{ r.id }})">
@@ -182,6 +199,66 @@
   <button class="bulk-bar-cancel" onclick="clearSelection()">Скасувати</button>
 </div>
 
+{% endblock %}
+
+{% block modals %}
+<!-- Edit modal — поза .content щоб position:fixed не ламалось анімацією -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Редагувати чек</div>
+      <button class="modal-close" onclick="closeEdit()">×</button>
+    </div>
+    <div class="modal-form-grid">
+      <div class="form-group-web">
+        <label class="web-label">Дата</label>
+        <input class="web-input" id="ef_date" placeholder="DD.MM.YYYY">
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">Час</label>
+        <input class="web-input" id="ef_time" placeholder="HH:MM:SS">
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">Сума, грн</label>
+        <input class="web-input" id="ef_amount" type="number" step="0.01">
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">Категорія</label>
+        <select class="web-input" id="ef_category">
+          {% set cats_map = {
+            'food': '🛒 Продукти', 'transport': '⛽ Транспорт',
+            'cafe': '🍽 Кафе/Ресторан', 'pharmacy': '💊 Аптека',
+            'entertainment': '🎭 Розваги', 'clothing': '👕 Одяг',
+            'household': '🏠 Побут', 'other': '📦 Інше'
+          } %}
+          {% for key, label in cats_map.items() %}
+          <option value="{{ label }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">Номер чеку</label>
+        <input class="web-input" id="ef_receipt_number" placeholder="228172">
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">Фіскальний №</label>
+        <input class="web-input" id="ef_fiscal_number" placeholder="3000812008">
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">ЗН ПРРО</label>
+        <input class="web-input" id="ef_serial_number">
+      </div>
+      <div class="form-group-web">
+        <label class="web-label">QR посилання</label>
+        <input class="web-input" id="ef_qr_link" placeholder="https://cabinet.tax.gov.ua/...">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveEdit()">💾 Зберегти</button>
+      <button class="btn btn-ghost"   onclick="closeEdit()">Скасувати</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -339,6 +416,73 @@ async function doDelete(ids) {
     console.error('Delete failed', e);
   }
 }
+
+/* ── Edit modal ─────────────────────────────────────────────────── */
+let _editId = null;
+
+async function openEdit(id) {
+  _editId = id;
+  try {
+    const resp = await fetch(`/api/receipt/${id}`);
+    const data = await resp.json();
+    const r = data.receipt;
+    document.getElementById('ef_date').value           = r.receipt_date   || '';
+    document.getElementById('ef_time').value           = r.receipt_time   || '';
+    document.getElementById('ef_amount').value         = r.amount         || '';
+    document.getElementById('ef_receipt_number').value = r.receipt_number || '';
+    document.getElementById('ef_fiscal_number').value  = r.fiscal_number  || '';
+    document.getElementById('ef_serial_number').value  = r.serial_number  || '';
+    document.getElementById('ef_qr_link').value        = r.qr_link        || '';
+    const catSel = document.getElementById('ef_category');
+    Array.from(catSel.options).forEach(o => {
+      o.selected = o.value === (r.category || '');
+    });
+    document.getElementById('editModal').classList.add('open');
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function closeEdit() {
+  document.getElementById('editModal').classList.remove('open');
+  _editId = null;
+}
+
+async function saveEdit() {
+  if (!_editId) return;
+  const fields = {
+    receipt_date:   document.getElementById('ef_date').value.trim()           || null,
+    receipt_time:   document.getElementById('ef_time').value.trim()           || null,
+    amount:         parseFloat(document.getElementById('ef_amount').value)    || null,
+    category:       document.getElementById('ef_category').value              || null,
+    receipt_number: document.getElementById('ef_receipt_number').value.trim() || null,
+    fiscal_number:  document.getElementById('ef_fiscal_number').value.trim()  || null,
+    serial_number:  document.getElementById('ef_serial_number').value.trim()  || null,
+    qr_link:        document.getElementById('ef_qr_link').value.trim()        || null,
+  };
+  try {
+    const resp = await fetch(`/api/receipt/${_editId}/update`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(fields),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      closeEdit();
+      window.location.reload();
+    }
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+// Close on backdrop click
+document.getElementById('editModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('editModal')) closeEdit();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeEdit();
+});
 
 /* ── Receipt detail expand ──────────────────────────────────────── */
 const _detailCache = {};

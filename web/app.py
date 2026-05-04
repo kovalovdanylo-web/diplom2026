@@ -28,6 +28,76 @@ from config import config
 _DB_PATH    = str(Path(__file__).parent.parent / config.db_path)
 _PHOTOS_DIR = str(Path(__file__).parent.parent / "photos")
 
+_QUARTER_MONTHS = {1: [1,2,3], 2: [4,5,6], 3: [7,8,9], 4: [10,11,12]}
+_UA_MONTHS_SHORT = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру']
+
+CATEGORIES = {
+    "food":          "🛒 Продукти",
+    "transport":     "⛽ Транспорт",
+    "cafe":          "🍽 Кафе/Ресторан",
+    "pharmacy":      "💊 Аптека",
+    "entertainment": "🎭 Розваги",
+    "clothing":      "👕 Одяг",
+    "household":     "🏠 Побут",
+    "other":         "📦 Інше",
+}
+
+
+def _period_where(period_type: str, period: str) -> tuple[str, list]:
+    """Повертає (where_extra, params) для фільтрації по місяцю/кварталу/року."""
+    if not period:
+        return "", []
+    if period_type == "month":
+        parts = period.split("-")
+        if len(parts) == 2:
+            return "AND receipt_date LIKE ?", [f"%.{parts[1]}.{parts[0]}"]
+    elif period_type == "quarter":
+        parts = period.split("-Q")
+        if len(parts) == 2:
+            year, q = parts[0], int(parts[1])
+            months = _QUARTER_MONTHS.get(q, [])
+            placeholders = ",".join("?" * len(months))
+            return (
+                f"AND substr(receipt_date,7,4)=? "
+                f"AND CAST(substr(receipt_date,4,2) AS INTEGER) IN ({placeholders})",
+                [year] + months,
+            )
+    elif period_type == "year":
+        return "AND substr(receipt_date,7,4)=?", [period]
+    return "", []
+
+
+def _period_label(period_type: str, period: str) -> str:
+    """Людська назва для відображення в UI."""
+    if not period:
+        return ""
+    if period_type == "month":
+        parts = period.split("-")
+        if len(parts) == 2:
+            try:
+                return f"{_UA_MONTHS_SHORT[int(parts[1])]} {parts[0]}"
+            except (IndexError, ValueError):
+                return period
+    elif period_type == "quarter":
+        return period.replace("-Q", " Q")
+    return period
+
+
+def _construct_qr_url(receipt_number, fiscal_number, date, time, amount) -> str:
+    """Будує URL кабінету ДПС з параметрів чеку."""
+    if not date or len(date) < 10:
+        return ""
+    date_raw = date[6:10] + date[3:5] + date[0:2]
+    time_raw = (time or "000000").replace(":", "")[:6]
+    sm = f"{float(amount):.2f}" if amount else "0"
+    params = []
+    if date_raw:       params.append(f"date={date_raw}")
+    if time_raw:       params.append(f"time={time_raw}")
+    if receipt_number: params.append(f"id={receipt_number}")
+    if sm:             params.append(f"sm={sm}")
+    if fiscal_number:  params.append(f"fn={fiscal_number}")
+    return "https://cabinet.tax.gov.ua/cashregs/check?" + "&".join(params)
+
 _UA_MONTHS_FULL = [
     '', 'Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень',
     'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень',
@@ -187,6 +257,49 @@ class WebDatabase:
         ).fetchone()
         cat_map = {r["category"]: {"total": r["total"] or 0, "count": r["cnt"]} for r in rows}
         return cat_map, s["cnt"] or 0, s["s"] or 0
+
+    def receipt_by_id(self, auth_id: int, receipt_id: int):
+        return self.connection().execute(
+            "SELECT * FROM receipts WHERE id=? AND auth_id=?",
+            (receipt_id, auth_id),
+        ).fetchone()
+
+    def receipt_update(self, auth_id: int, receipt_id: int, **fields) -> bool:
+        allowed = {"receipt_number","fiscal_number","serial_number",
+                   "receipt_date","receipt_time","amount","qr_link","category"}
+        data = {k: v for k, v in fields.items() if k in allowed}
+        if not data:
+            return False
+        set_clause = ", ".join(f"{k}=?" for k in data)
+        conn = self.connection()
+        cursor = conn.execute(
+            f"UPDATE receipts SET {set_clause} WHERE id=? AND auth_id=?",
+            list(data.values()) + [receipt_id, auth_id],
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def receipt_insert(self, auth_id: int, **fields) -> int:
+        allowed = {"receipt_number","fiscal_number","serial_number",
+                   "receipt_date","receipt_time","amount","qr_link","category"}
+        data = {k: v for k, v in fields.items() if k in allowed}
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        conn = self.connection()
+        cursor = conn.execute(
+            f"INSERT INTO receipts (auth_id, {cols}) VALUES (?, {placeholders})",
+            [auth_id] + list(data.values()),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def receipts_available_years(self, auth_id: int) -> list:
+        return self.connection().execute(
+            """SELECT DISTINCT substr(receipt_date,7,4) as year
+               FROM receipts WHERE auth_id=? AND length(receipt_date)>=10
+               ORDER BY year DESC""",
+            (auth_id,),
+        ).fetchall()
 
     def items_by_receipt(self, receipt_id: int) -> list:
         return self.connection().execute(
@@ -367,52 +480,130 @@ def create_app() -> Flask:
     @app.route("/stats")
     @login_required
     def stats():
-        auth_id        = session["auth_id"]
-        selected_month = request.args.get("month", "")
-        extra, params  = "", []
-        if selected_month and (like := _month_like(selected_month)):
-            extra  = "AND receipt_date LIKE ?"
-            params = [like]
+        auth_id     = session["auth_id"]
+        period_type = request.args.get("period_type", "month")
+        period      = request.args.get("period", "")
+        extra, params = _period_where(period_type, period)
         return render_template(
             "stats.html",
             cat_stats=web_db.receipts_cat_stats(auth_id, extra, params),
             month_stats=web_db.receipts_month_stats(auth_id),
             summary=web_db.receipts_summary(auth_id, extra, params),
             months=web_db.receipts_months(auth_id),
-            selected_month=selected_month,
+            period_type=period_type,
+            period=period,
+            period_label=_period_label(period_type, period),
             top_products=web_db.items_top(auth_id),
         )
 
     @app.route("/photos/<path:filename>")
     def serve_photo(filename):
-        """Роздає збережені фото чеків."""
         return send_from_directory(_PHOTOS_DIR, filename)
 
     @app.route("/api/receipt/<int:receipt_id>")
     @login_required
     def receipt_detail(receipt_id):
-        """JSON: товари та фото для конкретного чеку."""
+        """JSON: поля чеку + товари + фото."""
         auth_id = session["auth_id"]
-        owner = web_db.connection().execute(
-            "SELECT id FROM receipts WHERE id=? AND auth_id=?",
-            (receipt_id, auth_id),
-        ).fetchone()
-        if not owner:
+        row = web_db.receipt_by_id(auth_id, receipt_id)
+        if not row:
             return jsonify({"error": "not found"}), 404
-
         items  = [dict(r) for r in web_db.items_by_receipt(receipt_id)]
         photos = [dict(r) for r in web_db.photos_by_receipt(receipt_id)]
-        return jsonify({"items": items, "photos": photos})
+        return jsonify({"receipt": dict(row), "items": items, "photos": photos})
+
+    @app.route("/api/receipt/<int:receipt_id>/update", methods=["POST"])
+    @login_required
+    def receipt_update(receipt_id):
+        """Оновлення полів чеку."""
+        auth_id = session["auth_id"]
+        data = request.get_json(silent=True) or {}
+        ok = web_db.receipt_update(auth_id, receipt_id, **data)
+        return jsonify({"ok": ok})
+
+    @app.route("/receipts/add", methods=["GET", "POST"])
+    @login_required
+    def receipts_add():
+        """Ручне введення чеку."""
+        auth_id = session["auth_id"]
+        error = None
+        if request.method == "POST":
+            receipt_number = request.form.get("receipt_number", "").strip() or None
+            fiscal_number  = request.form.get("fiscal_number",  "").strip() or None
+            receipt_date   = request.form.get("receipt_date",   "").strip() or None
+            receipt_time   = request.form.get("receipt_time",   "").strip() or None
+            amount_str     = request.form.get("amount",         "").strip()
+            category       = request.form.get("category",       "other")
+
+            if not receipt_date:
+                error = "Дата обов'язкова"
+            elif not amount_str:
+                error = "Сума обов'язкова"
+            else:
+                try:
+                    amount = float(amount_str.replace(",", "."))
+                except ValueError:
+                    error = "Невірний формат суми"
+
+            if not error:
+                qr_link = _construct_qr_url(
+                    receipt_number, fiscal_number,
+                    receipt_date, receipt_time, amount
+                )
+                web_db.receipt_insert(
+                    auth_id,
+                    receipt_number=receipt_number,
+                    fiscal_number=fiscal_number,
+                    receipt_date=receipt_date,
+                    receipt_time=receipt_time or "00:00:00",
+                    amount=amount,
+                    category=category,
+                    qr_link=qr_link or None,
+                )
+                return redirect(url_for("receipts"))
+
+        return render_template("receipt_form.html",
+                               title="Додати чек",
+                               receipt=None,
+                               categories=CATEGORIES,
+                               error=error)
 
     @app.route("/compare")
     @login_required
     def compare():
         auth_id = session["auth_id"]
-        month_a = request.args.get("month_a", "")
-        month_b = request.args.get("month_b", "")
-        map_a, count_a, sum_a = web_db.receipts_cat_by_month(auth_id, month_a)
-        map_b, count_b, sum_b = web_db.receipts_cat_by_month(auth_id, month_b)
-        all_cats   = sorted(set(list(map_a) + list(map_b)))
+        type_a  = request.args.get("type_a", "month")
+        period_a = request.args.get("period_a", "")
+        type_b  = request.args.get("type_b", "month")
+        period_b = request.args.get("period_b", "")
+
+        def _cat_stats_for_period(period_type, period):
+            extra, params = _period_where(period_type, period)
+            if not extra:
+                return {}, 0, 0
+            rows = web_db.receipts_cat_stats(auth_id, extra, params)
+            sm = web_db.receipts_summary(auth_id, extra, params)
+            cat_map = {r["category"]: {"total": r["total"] or 0, "count": r["count"]} for r in rows}
+            return cat_map, sm["count"] or 0, sm["total_sum"] or 0
+
+        def _daily_for_period(period_type, period):
+            if period_type == "month":
+                return web_db.receipts_daily(auth_id, period)
+            extra, params = _period_where(period_type, period)
+            if not extra:
+                return []
+            rows = web_db.connection().execute(
+                f"""SELECT CAST(substr(receipt_date,1,2) AS INTEGER) as day,
+                           ROUND(SUM(amount),2) as total, COUNT(*) as cnt
+                    FROM receipts WHERE auth_id=? {extra}
+                    GROUP BY substr(receipt_date,1,2) ORDER BY day""",
+                [auth_id] + params,
+            ).fetchall()
+            return [{"day": r["day"], "total": r["total"] or 0, "count": r["cnt"]} for r in rows]
+
+        map_a, count_a, sum_a = _cat_stats_for_period(type_a, period_a)
+        map_b, count_b, sum_b = _cat_stats_for_period(type_b, period_b)
+        all_cats = sorted(set(list(map_a) + list(map_b)))
         comparison = [
             {
                 "category": cat,
@@ -426,13 +617,15 @@ def create_app() -> Flask:
         return render_template(
             "compare.html",
             months=web_db.receipts_months(auth_id),
-            month_a=month_a, month_b=month_b,
-            label_a=_month_label(month_a), label_b=_month_label(month_b),
+            type_a=type_a, period_a=period_a,
+            type_b=type_b, period_b=period_b,
+            label_a=_period_label(type_a, period_a),
+            label_b=_period_label(type_b, period_b),
             comparison=comparison,
             sum_a=sum_a, sum_b=sum_b,
             count_a=count_a, count_b=count_b,
-            daily_a=web_db.receipts_daily(auth_id, month_a),
-            daily_b=web_db.receipts_daily(auth_id, month_b),
+            daily_a=_daily_for_period(type_a, period_a),
+            daily_b=_daily_for_period(type_b, period_b),
         )
 
     return app

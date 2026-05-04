@@ -690,6 +690,109 @@ tbody tr:hover .del-btn { opacity: 1; }
   min-height: 16px;
 }
 
+/* ── Web form fields ───────────────────────────────────────────────── */
+.form-group-web { display: flex; flex-direction: column; gap: 5px; }
+.web-label {
+  font-size: 11.5px; font-weight: 600;
+  color: var(--text-muted); letter-spacing: 0.2px;
+}
+.web-input {
+  padding: 8px 12px;
+  border: 1.5px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13.5px;
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+}
+.web-input:focus { border-color: var(--accent); background: #fff; }
+.web-input::placeholder { color: var(--text-light); }
+select.web-input { cursor: pointer; }
+
+/* ── Edit modal ────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 400;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s var(--ease);
+}
+.modal-overlay.open { opacity: 1; pointer-events: all; }
+
+.modal-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 28px 30px;
+  width: 100%; max-width: 560px;
+  max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  transform: translateY(16px);
+  transition: transform 0.25s var(--ease);
+}
+.modal-overlay.open .modal-card { transform: translateY(0); }
+
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--card-border);
+}
+.modal-title { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; }
+.modal-close {
+  width: 28px; height: 28px;
+  border: none; background: transparent;
+  color: var(--text-light); font-size: 20px; line-height: 1;
+  cursor: pointer; border-radius: var(--radius-sm);
+  transition: background 0.15s, color 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-close:hover { background: #f0f2f8; color: var(--text); }
+
+.modal-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+@media (max-width: 500px) { .modal-form-grid { grid-template-columns: 1fr; } }
+
+.modal-footer {
+  display: flex; gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--card-border);
+}
+
+/* ── Period selector ───────────────────────────────────────────────── */
+.period-selector {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.period-type-btns {
+  display: inline-flex;
+  background: #f0f2f8;
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+}
+.period-type-btn {
+  padding: 5px 14px;
+  font-size: 12.5px; font-weight: 500;
+  border: none; background: transparent;
+  color: var(--text-muted);
+  border-radius: calc(var(--radius-sm) - 1px);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.period-type-btn.active {
+  background: var(--card-bg);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
 /* ── Utils ─────────────────────────────────────────────────────────── */
 .mt-4 { margin-top: 16px; }
 .mb-4 { margin-bottom: 16px; }

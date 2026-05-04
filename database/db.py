@@ -266,6 +266,28 @@ class ReceiptRepository(_BaseRepository):
         finally:
             await db.close()
 
+    async def update(self, auth_id: int, receipt_id: int, **fields) -> bool:
+        """Оновлює поля чеку. Повертає True якщо запис знайдено."""
+        allowed = {
+            "receipt_number", "fiscal_number", "serial_number",
+            "receipt_date", "receipt_time", "amount",
+            "qr_link", "category",
+        }
+        data = {k: v for k, v in fields.items() if k in allowed}
+        if not data:
+            return False
+        set_clause = ", ".join(f"{k} = ?" for k in data)
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                f"UPDATE receipts SET {set_clause} WHERE id = ? AND auth_id = ?",
+                list(data.values()) + [receipt_id, auth_id],
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+        finally:
+            await db.close()
+
     async def delete(self, auth_id: int, receipt_id: int) -> bool:
         """Видаляє чек. Повертає True якщо видалено."""
         db = await self._connect()
