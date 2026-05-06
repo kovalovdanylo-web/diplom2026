@@ -30,6 +30,18 @@
   </div>
 </div>
 
+{% if unverified_count %}
+<div class="unverified-alert">
+  <span class="icon">⚠️</span>
+  <span>
+    У вас <strong>{{ unverified_count }}</strong>
+    {{ 'непідтверджений чек' if unverified_count == 1 else 'непідтверджені чеки' if unverified_count < 5 else 'непідтверджених чеків' }} —
+    перевірте дані після сканування.
+  </span>
+  <a href="{{ url_for('receipts', verified='0') }}">Переглянути →</a>
+</div>
+{% endif %}
+
 <!-- Quick stats -->
 <div class="stat-grid" style="margin-bottom:24px;">
   <div class="stat-card">

@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import (
+    db,
     get_total_stats,
     auth_set_logged_in,
     auth_get_by_telegram,
@@ -147,6 +148,35 @@ async def cmd_total(message: Message):
     text += f"\n🤖 Витрати API: ~${total_cost:.3f}"
 
     await message.answer(text, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("verify:"))
+async def cb_verify(callback: CallbackQuery):
+    """Підтвердження правильності чеку."""
+    receipt_id = int(callback.data.split(":")[1])
+    auth = await auth_get_by_telegram(callback.from_user.id)
+    if not auth:
+        await callback.answer("❌ Помилка авторизації", show_alert=True)
+        return
+
+    ok = await db.receipts.set_verified(auth["id"], receipt_id, True)
+    if ok:
+        # Оновлюємо клавіатуру — прибираємо кнопку підтвердження для цього чеку
+        markup = callback.message.reply_markup
+        new_rows = []
+        for row in (markup.inline_keyboard if markup else []):
+            new_row = [btn for btn in row if btn.callback_data != f"verify:{receipt_id}"]
+            if new_row:
+                new_rows.append(new_row)
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=new_rows) if new_rows else None
+            )
+        except Exception:
+            pass
+        await callback.answer("✅ Чек підтверджено!", show_alert=False)
+    else:
+        await callback.answer("❌ Не вдалося підтвердити", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("del_ask:"))

@@ -4,9 +4,12 @@
 WebDatabase  — синхронний доступ до SQLite для Flask (g-based connection)
 create_app() — фабричний метод Flask Application Factory
 """
+import io
 import re
 import sqlite3
 import sys
+import xml.etree.ElementTree as ET
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import Optional
@@ -15,7 +18,7 @@ import bcrypt
 from flask import (
     Flask, render_template, request,
     redirect, url_for, session, g, jsonify,
-    send_from_directory,
+    send_from_directory, Response,
 )
 
 # Гарантуємо що корінь проєкту є в sys.path незалежно від робочої директорії
@@ -158,7 +161,8 @@ class WebDatabase:
 
     # ── Receipts ──────────────────────────────────────────────
 
-    def receipts_query(self, auth_id: int, category: str = "", month: str = "") -> list:
+    def receipts_query(self, auth_id: int, category: str = "", month: str = "",
+                       verified: str = "") -> list:
         sql, params = "SELECT * FROM receipts WHERE auth_id = ?", [auth_id]
         if category:
             sql += " AND category = ?"; params.append(category)
@@ -166,10 +170,20 @@ class WebDatabase:
             parts = month.split("-")
             if len(parts) == 2:
                 sql += " AND receipt_date LIKE ?"; params.append(f"%.{parts[1]}.{parts[0]}")
-        # DD.MM.YYYY → YYYYMMDD для коректного хронологічного сортування
-        sql += """ ORDER BY
-            substr(receipt_date,7,4)||substr(receipt_date,4,2)||substr(receipt_date,1,2) DESC,
-            receipt_time DESC"""
+        if verified == "1":
+            sql += " AND is_verified = 1"
+        elif verified == "0":
+            sql += " AND is_verified = 0"
+        # Якщо показуємо всі — спочатку перевірені, потім непідтверджені,
+        # всередині кожної групи — за датою спаданням
+        if not verified:
+            sql += """ ORDER BY is_verified DESC,
+                substr(receipt_date,7,4)||substr(receipt_date,4,2)||substr(receipt_date,1,2) DESC,
+                receipt_time DESC"""
+        else:
+            sql += """ ORDER BY
+                substr(receipt_date,7,4)||substr(receipt_date,4,2)||substr(receipt_date,1,2) DESC,
+                receipt_time DESC"""
         return self.connection().execute(sql, params).fetchall()
 
     def receipts_categories(self, auth_id: int) -> list:
@@ -257,6 +271,22 @@ class WebDatabase:
         ).fetchone()
         cat_map = {r["category"]: {"total": r["total"] or 0, "count": r["cnt"]} for r in rows}
         return cat_map, s["cnt"] or 0, s["s"] or 0
+
+    def count_unverified(self, auth_id: int) -> int:
+        row = self.connection().execute(
+            "SELECT COUNT(*) FROM receipts WHERE auth_id=? AND is_verified=0",
+            (auth_id,),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def receipt_set_verified(self, auth_id: int, receipt_id: int, value: bool) -> bool:
+        conn = self.connection()
+        cursor = conn.execute(
+            "UPDATE receipts SET is_verified=? WHERE id=? AND auth_id=?",
+            (1 if value else 0, receipt_id, auth_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
     def receipt_by_id(self, auth_id: int, receipt_id: int):
         return self.connection().execute(
@@ -401,6 +431,7 @@ def create_app() -> Flask:
             summary=home_summary,
             recent=web_db.receipts_recent(auth_id),
             top_cats=web_db.receipts_top_categories(auth_id),
+            unverified_count=web_db.count_unverified(auth_id),
         )
 
     @app.route("/login", methods=["GET", "POST"])
@@ -449,13 +480,23 @@ def create_app() -> Flask:
         session.clear()
         return redirect(url_for("login"))
 
+    @app.route("/api/receipt/<int:receipt_id>/verify", methods=["POST"])
+    @login_required
+    def receipt_verify(receipt_id):
+        auth_id = session["auth_id"]
+        data    = request.get_json(silent=True) or {}
+        value   = bool(data.get("verified", True))
+        ok = web_db.receipt_set_verified(auth_id, receipt_id, value)
+        return jsonify({"ok": ok})
+
     @app.route("/receipts")
     @login_required
     def receipts():
         auth_id        = session["auth_id"]
         selected_cat   = request.args.get("category", "")
         selected_month = request.args.get("month", "")
-        rows = web_db.receipts_query(auth_id, selected_cat, selected_month)
+        selected_ver   = request.args.get("verified", "")
+        rows = web_db.receipts_query(auth_id, selected_cat, selected_month, selected_ver)
         return render_template(
             "receipts.html",
             receipts=rows,
@@ -463,6 +504,7 @@ def create_app() -> Flask:
             months=web_db.receipts_months(auth_id),
             selected_cat=selected_cat,
             selected_month=selected_month,
+            selected_ver=selected_ver,
             total_sum=sum(r["amount"] or 0 for r in rows),
         )
 
@@ -626,6 +668,102 @@ def create_app() -> Flask:
             count_a=count_a, count_b=count_b,
             daily_a=_daily_for_period(type_a, period_a),
             daily_b=_daily_for_period(type_b, period_b),
+        )
+
+    # ── XML export ─────────────────────────────────────────────
+
+    @app.route("/reports/receipts.xml")
+    @login_required
+    def export_xml():
+        auth_id     = session["auth_id"]
+        period_type = request.args.get("period_type", "")
+        period      = request.args.get("period", "")
+        category    = request.args.get("category", "")
+
+        extra, params = _period_where(period_type, period) if period_type else ("", [])
+        rows = web_db.receipts_query(auth_id, category, period if period_type == "month" else "")
+
+        # Якщо не місячний фільтр — фільтруємо через period_where
+        if period_type and period_type != "month":
+            sql  = "SELECT * FROM receipts WHERE auth_id=?"
+            args = [auth_id]
+            if extra:
+                sql += " " + extra; args += params
+            if category:
+                sql += " AND category=?"; args.append(category)
+            sql += " ORDER BY substr(receipt_date,7,4)||substr(receipt_date,4,2)||substr(receipt_date,1,2) DESC, receipt_time DESC"
+            rows = web_db.connection().execute(sql, args).fetchall()
+
+        root = ET.Element("receipts")
+        root.set("exported_at", datetime.now().strftime("%d.%m.%Y %H:%M"))
+        root.set("count", str(len(rows)))
+        if period:
+            root.set("period", _period_label(period_type, period))
+
+        for r in rows:
+            el = ET.SubElement(root, "receipt")
+            ET.SubElement(el, "date").text          = r["receipt_date"]    or ""
+            ET.SubElement(el, "time").text          = r["receipt_time"]    or ""
+            ET.SubElement(el, "amount").text        = str(r["amount"]      or "")
+            ET.SubElement(el, "category").text      = r["category"]        or ""
+            ET.SubElement(el, "receipt_number").text = r["receipt_number"] or ""
+            ET.SubElement(el, "fiscal_number").text = r["fiscal_number"]   or ""
+            ET.SubElement(el, "serial_number").text = r["serial_number"]   or ""
+
+        ET.indent(root, space="  ")
+        xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        return Response(
+            xml_bytes,
+            mimetype="application/xml",
+            headers={"Content-Disposition": f"attachment; filename=receipts.xml"},
+        )
+
+    # ── PDF export ──────────────────────────────────────────────
+
+    @app.route("/reports/stats.pdf")
+    @login_required
+    def export_pdf():
+        from playwright.sync_api import sync_playwright
+
+        auth_id     = session["auth_id"]
+        period_type = request.args.get("period_type", "")
+        period      = request.args.get("period", "")
+        extra, params = _period_where(period_type, period) if period_type else ("", [])
+
+        cat_stats   = web_db.receipts_cat_stats(auth_id, extra, params)
+        month_stats = web_db.receipts_month_stats(auth_id)
+        summary     = web_db.receipts_summary(auth_id, extra, params)
+        top_prods   = web_db.items_top(auth_id)
+
+        label = _period_label(period_type, period) or "Весь час"
+        html = render_template(
+            "stats_pdf.html",
+            title="Звіт по витратах",
+            subtitle=label,
+            generated_at=datetime.now().strftime("%d.%m.%Y %H:%M"),
+            summary=summary,
+            cat_stats=cat_stats,
+            month_stats=month_stats,
+            top_products=top_prods,
+        )
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.set_content(html, wait_until="networkidle")
+            page.wait_for_timeout(800)   # Chart.js рендер
+            pdf_bytes = page.pdf(
+                format="A4",
+                margin={"top": "10mm", "bottom": "10mm",
+                        "left": "10mm", "right": "10mm"},
+                print_background=True,
+            )
+            browser.close()
+
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=stats_report.pdf"},
         )
 
     return app

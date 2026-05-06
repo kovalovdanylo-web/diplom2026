@@ -173,12 +173,18 @@ async def handle_photo(message: Message, bot: Bot):
 
         response += "\n\n/menu"
 
-        # Кнопки видалення — по одній на кожен чек
+        # Кнопки: підтвердження + видалення — для кожного чеку
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"🗑 Видалити {label}",
-                callback_data=f"del_ask:{rid}"
-            )]
+            [
+                InlineKeyboardButton(
+                    text=f"✅ {label} — правильний",
+                    callback_data=f"verify:{rid}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑",
+                    callback_data=f"del_ask:{rid}",
+                ),
+            ]
             for rid, label in saved_ids
         ])
 

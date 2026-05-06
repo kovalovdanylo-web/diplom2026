@@ -10,9 +10,50 @@ Database — фасад з шістьма репозиторіями:
   • ReceiptPhotosRepository — таблиця receipt_photos (фото чеків)
 """
 import logging
+import re
 from typing import Optional
 
 import aiosqlite
+
+# ── Маски / валідатори ────────────────────────────────────────────────
+_DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
+_TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+
+
+def _mask_date(value: Optional[str]) -> Optional[str]:
+    """Нормалізує і валідує дату. Відхиляє невалідний формат."""
+    if not value:
+        return None
+    s = value.strip().replace("/", ".")
+    # ISO: YYYY-MM-DD або YYYY.MM.DD
+    m = re.match(r"^(\d{4})[-.](\d{2})[-.](\d{2})$", s)
+    if m:
+        result = f"{m.group(3)}.{m.group(2)}.{m.group(1)}"
+        return result if _DATE_RE.match(result) else None
+    # DD-MM-YYYY або DD.MM.YY → DD.MM.YYYY
+    m = re.match(r"^(\d{1,2})[-.](\d{1,2})[-.](\d{2,4})$", s)
+    if m:
+        d, mo, y = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        if len(y) == 2:
+            y = "20" + y
+        result = f"{d}.{mo}.{y}"
+        return result if _DATE_RE.match(result) else None
+    return None
+
+
+def _mask_time(value: Optional[str]) -> Optional[str]:
+    """Нормалізує і валідує час до HH:MM:SS."""
+    if not value:
+        return None
+    s = value.strip().replace(".", ":").replace("-", ":")
+    parts = s.split(":")
+    if len(parts) == 2:
+        result = f"{parts[0].zfill(2)}:{parts[1].zfill(2)}:00"
+    elif len(parts) == 3:
+        result = ":".join(p.zfill(2) for p in parts)
+    else:
+        return None
+    return result if _TIME_RE.match(result) else None
 
 from config import DB_PATH
 
@@ -214,6 +255,17 @@ class ReceiptRepository(_BaseRepository):
         tokens_used: int = 0,
     ) -> tuple[int, bool]:
         """Зберігає або оновлює чек. Повертає (id, is_new)."""
+        # Маски: нормалізація і валідація перед збереженням
+        receipt_date = _mask_date(receipt_date)
+        receipt_time = _mask_time(receipt_time)
+        if amount is not None:
+            try:
+                amount = round(float(amount), 2)
+                if amount < 0:
+                    amount = None
+            except (TypeError, ValueError):
+                amount = None
+
         existing_id = await self.find_existing(
             auth_id, receipt_number, fiscal_number, receipt_date, receipt_time
         )
@@ -263,6 +315,32 @@ class ReceiptRepository(_BaseRepository):
                 )
                 await db.commit()
                 return cursor.lastrowid, True
+        finally:
+            await db.close()
+
+    async def set_verified(self, auth_id: int, receipt_id: int, value: bool) -> bool:
+        """Встановлює або знімає позначку перевірки чеку."""
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                "UPDATE receipts SET is_verified=? WHERE id=? AND auth_id=?",
+                (1 if value else 0, receipt_id, auth_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+        finally:
+            await db.close()
+
+    async def count_unverified(self, auth_id: int) -> int:
+        """Кількість неперевірених чеків."""
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM receipts WHERE auth_id=? AND is_verified=0",
+                (auth_id,),
+            )
+            row = await cursor.fetchone()
+            return row[0]
         finally:
             await db.close()
 
@@ -548,6 +626,7 @@ class Database:
             for migration in [
                 "ALTER TABLE receipts ADD COLUMN category TEXT",
                 "ALTER TABLE receipts ADD COLUMN auth_id INTEGER",
+                "ALTER TABLE receipts ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0",
             ]:
                 try:
                     await conn.execute(migration)

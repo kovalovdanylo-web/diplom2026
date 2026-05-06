@@ -16,6 +16,14 @@ import re
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
+_DATE_VALID = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
+_TIME_VALID = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+# Шаблон для витягування ціни×кількості з назви: "21,90х 12=" або "2 x 35.00"
+_PRICE_QTY_RE = re.compile(
+    r"\s+([\d]+[,\.][\d]+|[\d]+)\s*[хxXх×]\s*([\d]+[,\.]?[\d]*)\s*=?\s*$",
+    re.UNICODE,
+)
+
 import anthropic
 from PIL import Image, ImageFilter
 
@@ -83,14 +91,16 @@ class ReceiptScanner:
     _RECEIPT_PROMPT = (
         f"Фото українського чеку. Витягни дані з КОЖНОГО чеку на фото.\n"
         f"rn=номер чеку, fn=фіскальний номер (10 цифр), sn=заводський номер, "
-        f"d=дата DD.MM.YYYY, t=час HH:MM:SS, a=сума числом, q=URL з QR або null, "
+        f"d=дата СТРОГО DD.MM.YYYY (наприклад 27.04.2026), "
+        f"t=час HH:MM:SS, a=сума числом, q=URL з QR або null, "
         f"c=категорія ({_CATEGORY_KEYS}), "
-        f"items=список товарів [{{'n':назва,'q':кількість,'p':ціна_за_од,'t':сума_рядка}}] або [].\n"
+        f"items=список товарів [{{'n':ТІЛЬКИ назва БЕЗ цифр/ціни/кількості,'q':кількість,'p':ціна_за_од,'t':сума}}] або [].\n"
         f"Категорії: {_CATEGORY_GUIDE}\n"
         f"{_CRITICAL_RULES}\n"
+        f"ВАЖЛИВО: n у items — лише назва товару, НЕ включати у назву ціну, кількість, символи х = *.\n"
         f"Відсутнє=null. Тільки JSON без пояснень.\n"
-        f'[{{"rn":"...","fn":"...","sn":"...","d":"...","t":"...","a":0.00,"q":null,"c":"food",'
-        f'"items":[{{"n":"Молоко","q":1.0,"p":35.00,"t":35.00}}]}}]'
+        f'[{{"rn":"...","fn":"...","sn":"...","d":"27.04.2026","t":"12:25:11","a":0.00,"q":null,"c":"food",'
+        f'"items":[{{"n":"Молоко","q":2.0,"p":35.00,"t":70.00}}]}}]'
     )
 
     _CATEGORY_PROMPT = (
@@ -309,19 +319,89 @@ class ReceiptScanner:
 
     @staticmethod
     def _normalize_date(value: Optional[str]) -> Optional[str]:
+        """
+        Нормалізує дату до формату DD.MM.YYYY.
+        Підтримує: DD.MM.YYYY, DD-MM-YYYY, YYYY-MM-DD, YYYY.MM.DD, DD.MM.YY
+        """
         if not value:
             return None
-        normalized = value.replace("-", ".")
-        parts = normalized.split(".")
-        if len(parts) == 3 and len(parts[2]) == 2:
-            parts[2] = "20" + parts[2]
-        return ".".join(parts)
+        s = value.strip().replace("/", ".")
+        # ISO формат: YYYY-MM-DD або YYYY.MM.DD
+        m = re.match(r"^(\d{4})[-.](\d{2})[-.](\d{2})$", s)
+        if m:
+            return f"{m.group(3)}.{m.group(2)}.{m.group(1)}"
+        # DD-MM-YYYY або DD.MM.YYYY або DD.MM.YY
+        m = re.match(r"^(\d{1,2})[-.](\d{1,2})[-.](\d{2,4})$", s)
+        if m:
+            d, mo, y = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+            if len(y) == 2:
+                y = "20" + y
+            result = f"{d}.{mo}.{y}"
+            if _DATE_VALID.match(result):
+                return result
+        return None  # невідомий формат — відкидаємо
 
     @staticmethod
     def _normalize_time(value: Optional[str]) -> Optional[str]:
+        """Нормалізує час до формату HH:MM:SS."""
         if not value:
             return None
-        return value.replace("-", ":").replace(".", ":")
+        s = value.strip().replace(".", ":").replace("-", ":").replace(" ", ":")
+        parts = s.split(":")
+        if len(parts) == 2:
+            h, mi = parts[0].zfill(2), parts[1].zfill(2)
+            result = f"{h}:{mi}:00"
+        elif len(parts) == 3:
+            h, mi, sec = parts[0].zfill(2), parts[1].zfill(2), parts[2].zfill(2)
+            result = f"{h}:{mi}:{sec}"
+        else:
+            return None
+        return result if _TIME_VALID.match(result) else None
+
+    @staticmethod
+    def _clean_item(item: dict) -> dict:
+        """
+        Очищає назву товару і витягує кількість/ціну якщо вони вбудовані в назву.
+        Формат: "Назва товару 21,90х12=" → name="Назва товару", qty=12, price=21.90
+        """
+        name  = (item.get("name") or "").strip()
+        qty   = item.get("quantity") or 1.0
+        price = item.get("unit_price") or 0.0
+        total = item.get("total_price") or 0.0
+
+        # Шукаємо ціна×кількість або кількість×ціна в кінці назви
+        m = _PRICE_QTY_RE.search(name)
+        if m:
+            p1 = float(m.group(1).replace(",", "."))
+            p2 = float(m.group(2).replace(",", "."))
+            # Ціна зазвичай має дробову частину, кількість — ціле число
+            if p2 == int(p2) and p1 != int(p1):
+                price, qty = p1, p2
+            elif p1 == int(p1) and p2 != int(p2):
+                qty, price = p1, p2
+            else:
+                price, qty = max(p1, p2), min(p1, p2)
+            if not total and price and qty:
+                total = round(price * qty, 2)
+            name = name[:m.start()].strip().rstrip("=").strip()
+
+        # Нормалізація назви: прибираємо зайві пробіли, капіталізуємо
+        name = re.sub(r"\s+", " ", name).strip()
+        if name.isupper() and len(name) > 1:
+            # Весь рядок великими — переводимо в Title Case по-українськи
+            name = " ".join(
+                w.capitalize() if w.isupper() else w
+                for w in name.split()
+            )
+        name = name or item.get("name") or ""  # fallback
+
+        return {
+            **item,
+            "name":        name,
+            "quantity":    qty   or 1.0,
+            "unit_price":  price or 0.0,
+            "total_price": total or 0.0,
+        }
 
     def _parse_claude_response(self, raw_text: str) -> list[dict]:
         """Парсить JSON-відповідь від Claude."""
@@ -342,15 +422,16 @@ class ReceiptScanner:
             raw_items = item.get("items") or []
             parsed_items = []
             for it in raw_items:
-                name = it.get("n") or it.get("name") or ""
-                if name.strip():
-                    parsed_items.append({
-                        "name":        name.strip(),
+                name = (it.get("n") or it.get("name") or "").strip()
+                if name:
+                    raw = {
+                        "name":        name,
                         "code":        it.get("code"),
                         "quantity":    self._safe_float(it.get("q") or it.get("quantity")) or 1.0,
                         "unit_price":  self._safe_float(it.get("p") or it.get("unit_price")) or 0.0,
                         "total_price": self._safe_float(it.get("t") or it.get("total_price")) or 0.0,
-                    })
+                    }
+                    parsed_items.append(self._clean_item(raw))
 
             results.append({
                 "receipt_number": g("rn", "receipt_number"),

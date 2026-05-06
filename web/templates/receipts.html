@@ -30,10 +30,28 @@
     {% endfor %}
   </select>
 
-  {% if selected_cat or selected_month %}
+  <!-- Verified filter -->
+  <div class="view-toggle">
+    <button type="button" class="view-btn {% if not selected_ver %}active{% endif %}"
+            onclick="setVerFilter('')">Всі</button>
+    <button type="button" class="view-btn {% if selected_ver=='1' %}active{% endif %}"
+            onclick="setVerFilter('1')">✅ Перевірені</button>
+    <button type="button" class="view-btn {% if selected_ver=='0' %}active{% endif %}"
+            onclick="setVerFilter('0')">⏳ Непідтверджені</button>
+  </div>
+
+  {% if selected_cat or selected_month or selected_ver %}
   <a href="{{ url_for('receipts') }}" class="btn btn-ghost">Скинути</a>
   {% endif %}
 </form>
+
+<button class="btn btn-ghost" onclick="openExportXml()">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+  XML
+</button>
 
 <a href="{{ url_for('receipts_add') }}" class="btn btn-primary">
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -85,13 +103,14 @@
     <table id="receiptsTable">
       <thead>
         <tr>
+          <th style="width:32px;" title="Перевірено"></th>
           <th style="width:36px;padding-left:18px;">
             <input type="checkbox" id="checkAll" title="Вибрати всі"
                    style="accent-color:var(--accent);cursor:pointer;">
           </th>
-          <th class="sortable col-date"   onclick="sortTable(1)">Дата <i class="sort-icon">↕</i></th>
+          <th class="sortable col-date"   onclick="sortTable(2)">Дата <i class="sort-icon">↕</i></th>
           <th class="col-time">Час</th>
-          <th class="sortable col-amount" onclick="sortTable(3)">Сума, грн <i class="sort-icon">↕</i></th>
+          <th class="sortable col-amount" onclick="sortTable(4)">Сума, грн <i class="sort-icon">↕</i></th>
           <th class="col-cat">Категорія</th>
           <th class="col-rnum">Номер чеку</th>
           <th class="col-fn col-hidden">ФН</th>
@@ -104,8 +123,19 @@
       </thead>
       <tbody>
         {% for r in receipts %}
-        <tr data-id="{{ r.id }}">
-          <td style="padding-left:18px;">
+        <tr data-id="{{ r.id }}"
+            data-verified="{{ r.is_verified or 0 }}"
+            data-date="{{ (r.receipt_date or '')[6:10] }}{{ (r.receipt_date or '')[3:5] }}{{ (r.receipt_date or '')[0:2] }}"
+            data-amount="{{ r.amount or 0 }}"
+            {% if not r.is_verified %}style="opacity:0.85"{% endif %}>
+          <td style="padding-left:10px;">
+            <button class="verify-btn {% if r.is_verified %}verified{% endif %}"
+                    id="vbtn-{{ r.id }}"
+                    onclick="toggleVerify({{ r.id }}, this)"
+                    title="{% if r.is_verified %}Перевірено. Натисніть щоб зняти{% else %}Підтвердити чек{% endif %}">
+            </button>
+          </td>
+          <td style="padding-left:8px;">
             <input type="checkbox" class="row-check" value="{{ r.id }}"
                    style="accent-color:var(--accent);cursor:pointer;">
           </td>
@@ -202,6 +232,31 @@
 {% endblock %}
 
 {% block modals %}
+<!-- Export XML modal -->
+<div class="modal-overlay" id="exportXmlModal">
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-header">
+      <div class="modal-title">Експорт XML</div>
+      <button class="modal-close" onclick="closeExportXml()">×</button>
+    </div>
+    <div class="export-info" id="xmlExportInfo"></div>
+    <div class="form-group-web" style="margin-bottom:20px;">
+      <label class="web-label">Назва файлу</label>
+      <input class="web-input" id="xmlFilename" placeholder="receipts.xml">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="downloadXml()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Завантажити
+      </button>
+      <button class="btn btn-ghost" onclick="closeExportXml()">Скасувати</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit modal — поза .content щоб position:fixed не ламалось анімацією -->
 <div class="modal-overlay" id="editModal">
   <div class="modal-card">
@@ -417,6 +472,83 @@ async function doDelete(ids) {
   }
 }
 
+/* ── Verified toggle ────────────────────────────────────────────── */
+async function toggleVerify(id, btn) {
+  const isVerified = btn.classList.contains('verified');
+  if (isVerified) {
+    // Зняти підтвердження — питаємо
+    if (!confirm('Зняти підтвердження з цього чеку?')) return;
+  }
+  const newVal = !isVerified;
+  try {
+    const resp = await fetch(`/api/receipt/${id}/verify`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({verified: newVal}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      btn.classList.toggle('verified', newVal);
+      btn.title = newVal ? 'Перевірено. Натисніть щоб зняти' : 'Підтвердити чек';
+      const row = btn.closest('tr');
+      row.style.opacity = newVal ? '1' : '0.85';
+    }
+  } catch(e) { console.error(e); }
+}
+
+function setVerFilter(val) {
+  const url = new URL(window.location.href);
+  if (val === '') url.searchParams.delete('verified');
+  else url.searchParams.set('verified', val);
+  window.location.href = url.toString();
+}
+
+/* ── Export XML ─────────────────────────────────────────────────── */
+function _buildDefaultXmlName() {
+  const params = new URLSearchParams(window.location.search);
+  const p  = params.get('period') || '';
+  const cat = params.get('category') || '';
+  const now = new Date();
+  const d = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  let name = 'receipts';
+  if (p)   name += '_' + p.replace('-Q','_Q');
+  if (cat) name += '_' + cat.replace(/[^\w]/g,'');
+  return name + '_' + d + '.xml';
+}
+
+function openExportXml() {
+  const params   = new URLSearchParams(window.location.search);
+  const period   = params.get('period') || '';
+  const pt       = params.get('period_type') || '';
+  const cat      = params.get('category') || '';
+  const ptLabel  = {month:'Місяць', quarter:'Квартал', year:'Рік'}[pt] || '';
+  const rows     = document.querySelectorAll('#receiptsTable tbody tr:not(.detail-row)');
+  const count    = rows.length;
+
+  document.getElementById('xmlExportInfo').innerHTML =
+    `Буде збережено: <strong>${count}</strong> чеків` +
+    (period ? `<br>Період: <strong>${ptLabel} ${period}</strong>` : '<br>Період: <strong>Весь час</strong>') +
+    (cat    ? `<br>Категорія: <strong>${cat}</strong>` : '');
+
+  document.getElementById('xmlFilename').value = _buildDefaultXmlName();
+  document.getElementById('exportXmlModal').classList.add('open');
+}
+function closeExportXml() {
+  document.getElementById('exportXmlModal').classList.remove('open');
+}
+function downloadXml() {
+  const filename = document.getElementById('xmlFilename').value.trim() || 'receipts.xml';
+  const params   = new URLSearchParams(window.location.search);
+  const a = document.createElement('a');
+  a.href = '/reports/receipts.xml?' + params.toString();
+  a.download = filename;
+  a.click();
+  closeExportXml();
+}
+document.getElementById('exportXmlModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('exportXmlModal')) closeExportXml();
+});
+
 /* ── Edit modal ─────────────────────────────────────────────────── */
 let _editId = null;
 
@@ -593,39 +725,72 @@ function _dateKey(s) {
   return m ? m[3] + m[2] + m[1] : s;
 }
 
-function sortTable(col) {
-  const table = document.getElementById('receiptsTable');
-  const tbody = table.querySelector('tbody');
-  const rows  = Array.from(tbody.querySelectorAll('tr'));
+const _selectedVer = {{ (selected_ver or '') | tojson }};
 
+// Які data-атрибути використовувати для сортування по стовпцю
+const SORT_ATTR = { 2: 'date', 4: 'amount' };
+
+function _getPairs() {
+  const tbody = document.getElementById('receiptsTable').querySelector('tbody');
+  const all   = Array.from(tbody.querySelectorAll('tr'));
+  const pairs = [];
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].classList.contains('detail-row')) continue;
+    const det = all[i+1]?.classList.contains('detail-row') ? all[i+1] : null;
+    pairs.push([all[i], det]);
+  }
+  return { tbody, pairs };
+}
+
+function sortTable(col) {
+  const { tbody, pairs } = _getPairs();
   if (sortCol === col) sortDir *= -1; else { sortCol = col; sortDir = 1; }
 
-  const DATE_COL = 1; // індекс колонки "Дата"
-  rows.sort((a, b) => {
+  const key = SORT_ATTR[col]; // 'date' | 'amount' | undefined
+
+  pairs.sort(([a], [b]) => {
+    // Режим "Всі": перевірені завжди зверху своєї групи
+    if (_selectedVer === '') {
+      const va = parseInt(a.dataset.verified || '0');
+      const vb = parseInt(b.dataset.verified || '0');
+      if (va !== vb) return vb - va;
+    }
+
+    if (key === 'date') {
+      // data-date = YYYYMMDD — сортується як рядок
+      const av = a.dataset.date || '';
+      const bv = b.dataset.date || '';
+      return av.localeCompare(bv) * sortDir;
+    }
+
+    if (key === 'amount') {
+      const av = parseFloat(a.dataset.amount || '0');
+      const bv = parseFloat(b.dataset.amount || '0');
+      return (av - bv) * sortDir;
+    }
+
+    // Інші стовпці — текстове порівняння через innerText
     const av = a.cells[col]?.innerText.trim() || '';
     const bv = b.cells[col]?.innerText.trim() || '';
-    // Дата — порівнюємо як YYYYMMDD
-    if (col === DATE_COL) return _dateKey(av).localeCompare(_dateKey(bv)) * sortDir;
-    // Число — числове порівняння
-    const an = parseFloat(av.replace(',', '.'));
-    const bn = parseFloat(bv.replace(',', '.'));
-    if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
     return av.localeCompare(bv, 'uk') * sortDir;
   });
 
-  rows.forEach(r => tbody.appendChild(r));
-
-  // Update sort icons
-  table.querySelectorAll('thead th').forEach(th => {
-    th.classList.remove('sort-asc', 'sort-desc');
-    const icon = th.querySelector('.sort-icon');
-    if (icon) icon.textContent = '↕';
+  pairs.forEach(([dataRow, detailRow]) => {
+    tbody.appendChild(dataRow);
+    if (detailRow) tbody.appendChild(detailRow);
   });
-  const th = table.querySelectorAll('thead th')[col];
+
+  // Іконки
+  document.querySelectorAll('#receiptsTable thead th').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    const ic = th.querySelector('.sort-icon');
+    if (ic) ic.textContent = '↕';
+  });
+  const th = document.querySelectorAll('#receiptsTable thead th')[col];
   if (th) {
     th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
-    const icon = th.querySelector('.sort-icon');
-    if (icon) icon.textContent = sortDir === 1 ? '↑' : '↓';
+    const ic = th.querySelector('.sort-icon');
+    if (ic) ic.textContent = sortDir === 1 ? '↑' : '↓';
   }
 }
 </script>
