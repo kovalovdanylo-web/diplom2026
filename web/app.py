@@ -31,6 +31,44 @@ from config import config
 _DB_PATH    = str(Path(__file__).parent.parent / config.db_path)
 _PHOTOS_DIR = str(Path(__file__).parent.parent / "photos")
 
+
+def _ensure_db_schema() -> None:
+    """Створює таблиці якщо вони ще не існують (sync версія для Flask)."""
+    conn = sqlite3.connect(_DB_PATH)
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS receipt_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                code TEXT,
+                quantity REAL,
+                unit_price REAL,
+                total_price REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS receipt_photos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                photo_file_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+            );
+        """)
+        # Міграція is_verified
+        try:
+            conn.execute(
+                "ALTER TABLE receipts ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+        except Exception:
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+
 _QUARTER_MONTHS = {1: [1,2,3], 2: [4,5,6], 3: [7,8,9], 4: [10,11,12]}
 _UA_MONTHS_SHORT = ['','Січ','Лют','Бер','Кві','Тра','Чер','Лип','Сер','Вер','Жов','Лис','Гру']
 
@@ -343,19 +381,21 @@ class WebDatabase:
             (receipt_id,),
         ).fetchall()
 
-    def items_top(self, auth_id: int, limit: int = 10) -> list:
+    def items_top(self, auth_id: int, limit: int = 10,
+                  where_extra: str = "", params_extra: list = None) -> list:
+        params = [auth_id] + (params_extra or []) + [limit]
         return self.connection().execute(
-            """SELECT ri.name,
+            f"""SELECT ri.name,
                       ROUND(SUM(ri.total_price), 2) as total,
                       ROUND(SUM(ri.quantity), 2) as qty,
                       COUNT(*) as cnt
                FROM receipt_items ri
                JOIN receipts r ON r.id = ri.receipt_id
-               WHERE r.auth_id = ? AND ri.name IS NOT NULL
+               WHERE r.auth_id = ? {where_extra} AND ri.name IS NOT NULL
                GROUP BY ri.name
                ORDER BY total DESC
                LIMIT ?""",
-            (auth_id, limit),
+            params,
         ).fetchall()
 
     def receipts_daily(self, auth_id: int, month_str: str) -> list:
@@ -379,6 +419,7 @@ class WebDatabase:
 
 def create_app() -> Flask:
     """Фабричний метод — створює та конфігурує Flask-застосунок."""
+    _ensure_db_schema()
     app = Flask(__name__)
     import os
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", "receipts-web-secret-2025")
@@ -535,7 +576,7 @@ def create_app() -> Flask:
             period_type=period_type,
             period=period,
             period_label=_period_label(period_type, period),
-            top_products=web_db.items_top(auth_id),
+            top_products=web_db.items_top(auth_id, where_extra=extra, params_extra=params),
         )
 
     @app.route("/photos/<path:filename>")

@@ -48,7 +48,7 @@
   {% endif %}
 </div>
 
-{% if month_a and month_b %}
+{% if period_a and period_b %}
 
 <!-- Summary -->
 <div class="compare-summary">
@@ -768,7 +768,7 @@ function renderViz() {
 }
 
 /* ═══ Init (only if results shown) ═══════════════════════════════════ */
-{% if month_a and month_b %}
+{% if period_a and period_b %}
 loadState();
 buildCatPills();
 syncSettingsUI();

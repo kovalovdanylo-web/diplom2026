@@ -20,6 +20,14 @@ _DATE_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
 _TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 
 
+def _clean_str(value: Optional[str]) -> Optional[str]:
+    """Очищає рядок від null-байтів, пробілів і псевдо-null значень."""
+    if value is None:
+        return None
+    s = str(value).replace("\x00", "").strip()
+    return None if s.lower() in ("null", "none", "") else s
+
+
 def _mask_date(value: Optional[str]) -> Optional[str]:
     """Нормалізує і валідує дату. Відхиляє невалідний формат."""
     if not value:
@@ -46,12 +54,19 @@ def _mask_time(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     s = value.strip().replace(".", ":").replace("-", ":")
-    parts = s.split(":")
+    s = re.sub(r":+", ":", s)          # "17::5" → "17:5"
+    parts = [p for p in s.split(":") if p != ""]
     if len(parts) == 2:
         result = f"{parts[0].zfill(2)}:{parts[1].zfill(2)}:00"
     elif len(parts) == 3:
-        result = ":".join(p.zfill(2) for p in parts)
+        result = ":".join(p.zfill(2) for p in parts[:3])
     else:
+        return None
+    try:
+        hh, mm, ss = map(int, result.split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59):
+            return None
+    except ValueError:
         return None
     return result if _TIME_RE.match(result) else None
 
@@ -256,8 +271,11 @@ class ReceiptRepository(_BaseRepository):
     ) -> tuple[int, bool]:
         """Зберігає або оновлює чек. Повертає (id, is_new)."""
         # Маски: нормалізація і валідація перед збереженням
-        receipt_date = _mask_date(receipt_date)
-        receipt_time = _mask_time(receipt_time)
+        receipt_number = _clean_str(receipt_number)
+        fiscal_number  = _clean_str(fiscal_number)
+        serial_number  = _clean_str(serial_number)
+        receipt_date   = _mask_date(receipt_date)
+        receipt_time   = _mask_time(receipt_time)
         if amount is not None:
             try:
                 amount = round(float(amount), 2)

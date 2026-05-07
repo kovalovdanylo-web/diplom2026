@@ -47,6 +47,7 @@ CATEGORIES: dict[str, str] = {
     "entertainment": "🎭 Розваги",
     "clothing":      "👕 Одяг",
     "household":     "🏠 Побут",
+    "post":          "✉️ Пошта/Доставка",
     "other":         "📦 Інше",
 }
 _CATEGORY_KEYS    = "/".join(CATEGORIES.keys())
@@ -74,6 +75,8 @@ class ReceiptScanner:
         "clothing=одяг/взуття/аксесуари/H&M/Zara/LC Waikiki/New Yorker/магазин одягу; "
         "household=побутова хімія/госптовари/Comfy/Foxtrot/Eldorado/меблі/IKEA/"
         "будматеріали/Епіцентр/Нова Лінія/електроніка; "
+        "post=Нова Пошта/Укрпошта/Justin/Meest/Rozetka доставка/кур'єрська служба/"
+        "поштове відділення/переказ коштів/оплата доставки/відправка посилки; "
         "other=все що не підходить під жодну категорію вище"
     )
 
@@ -85,6 +88,7 @@ class ReceiptScanner:
         "- Супермаркет/продуктовий → food (навіть якщо є побутова хімія серед товарів)\n"
         "- Одяг/взуття → clothing (навіть якщо в ТЦ разом з іншим)\n"
         "- Comfy/Foxtrot/Eldorado/Епіцентр → household\n"
+        "- Нова Пошта/Укрпошта/Justin/Meest/переказ коштів/доставка → post\n"
         "- Сумнів між двома → обирай ту що більше відповідає назві магазину на чеку"
     )
 
@@ -385,10 +389,12 @@ class ReceiptScanner:
                 total = round(price * qty, 2)
             name = name[:m.start()].strip().rstrip("=").strip()
 
-        # Нормалізація назви: прибираємо зайві пробіли, капіталізуємо
+        # Нормалізація назви
         name = re.sub(r"\s+", " ", name).strip()
+        # Прибираємо залишки формул (= х × * в кінці)
+        name = re.sub(r"[\s=×хxX\*]+$", "", name).strip()
+        # ALL CAPS → Title Case
         if name.isupper() and len(name) > 1:
-            # Весь рядок великими — переводимо в Title Case по-українськи
             name = " ".join(
                 w.capitalize() if w.isupper() else w
                 for w in name.split()

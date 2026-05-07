@@ -744,9 +744,16 @@ function _getPairs() {
 
 function sortTable(col) {
   const { tbody, pairs } = _getPairs();
-  if (sortCol === col) sortDir *= -1; else { sortCol = col; sortDir = 1; }
-
   const key = SORT_ATTR[col]; // 'date' | 'amount' | undefined
+
+  if (sortCol === col) {
+    sortDir *= -1;
+  } else {
+    sortCol = col;
+    // Дата: перший клік → DESC (нові зверху, як у сервері)
+    // Сума і решта: перший клік → ASC
+    sortDir = (key === 'date') ? -1 : 1;
+  }
 
   pairs.sort(([a], [b]) => {
     // Режим "Всі": перевірені завжди зверху своєї групи
